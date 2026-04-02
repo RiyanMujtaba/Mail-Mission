@@ -1,2 +1,6 @@
 node_modules/
 .env
+.env.save
+.DS_Store
+check.js
+listmodels.js
