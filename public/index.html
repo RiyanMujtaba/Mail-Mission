@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MAIL MISSION — AI Email Task Extractor</title>
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=VT323&family=Press+Start+2P&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+  <!-- CRT effects -->
+  <div class="scanlines"></div>
+  <div class="vignette"></div>
+
+  <!-- ── LOGIN SCREEN ── -->
+  <div id="login-screen" class="screen">
+    <div class="boot-sequence" id="boot-seq">
+      <div class="boot-line" style="--d:0.0s">MAIL MISSION OS v2.6 ............... OK</div>
+      <div class="boot-line" style="--d:0.4s">Loading AI engine .................. OK</div>
+      <div class="boot-line" style="--d:0.8s">Gmail interface .................... READY</div>
+      <div class="boot-line" style="--d:1.2s">Task extractor ..................... ARMED</div>
+      <div class="boot-line" style="--d:1.6s">Awaiting authentication ............ <span class="blink">_</span></div>
+    </div>
+    <div class="login-card" id="login-card">
+      <div class="login-logo">
+        <span class="logo-icon">✉</span>
+        <div>
+          <div class="logo-title">MAIL MISSION</div>
+          <div class="logo-sub">// AI EMAIL TASK EXTRACTOR //</div>
+        </div>
+      </div>
+      <p class="login-desc">
+        Connects to your Gmail. Reads your inbox.<br />
+        Tells you <span class="accent">exactly what you need to do</span> — in seconds.
+      </p>
+      <div class="feature-list">
+        <div class="feature">⚡ AI extracts tasks from every email</div>
+        <div class="feature">🎯 Priority ranking — HIGH, MEDIUM, LOW</div>
+        <div class="feature">📋 Daily brief generated automatically</div>
+        <div class="feature">✅ Mark tasks done as you go</div>
+      </div>
+      <a href="/auth/google" class="btn-connect">
+        <span class="btn-icon">▶</span> CONNECT GMAIL
+      </a>
+      <button class="btn-demo" id="btn-demo">
+        <span class="btn-icon">⚡</span> TRY DEMO — no login needed
+      </button>
+      <div class="login-note">Read-only access. We never store your emails.</div>
+    </div>
+  </div>
+
+  <!-- ── DASHBOARD ── -->
+  <div id="dashboard" class="screen hidden">
+
+    <!-- Demo banner -->
+    <div id="demo-banner" class="demo-banner hidden">
+      ⚡ DEMO MODE — showing sample data &nbsp;|&nbsp;
+      <a href="/auth/google" class="demo-connect-link" id="demo-connect-link">Connect real Gmail →</a>
+    </div>
+
+    <!-- Server not running notice -->
+    <div id="server-notice" class="server-notice hidden">
+      <div class="notice-inner">
+        <div class="notice-title">⚠ SERVER NOT RUNNING</div>
+        <div class="notice-msg">To connect real Gmail, you need to run the server first:</div>
+        <div class="notice-code">cd mail_mission &nbsp;&amp;&amp;&nbsp; npm install &nbsp;&amp;&amp;&nbsp; npm start</div>
+        <div class="notice-msg">Then open <strong>http://localhost:3000</strong> in your browser.</div>
+        <button class="notice-close" id="notice-close">GOT IT</button>
+      </div>
+    </div>
+
+    <!-- Header -->
+    <header class="dash-header">
+      <div class="header-left">
+        <span class="header-logo">✉ MAIL<span class="accent"> MISSION</span></span>
+      </div>
+      <div class="header-center" id="header-stats">
+        <span class="stat"><span class="stat-val" id="stat-scanned">0</span> SCANNED</span>
+        <span class="stat-sep">|</span>
+        <span class="stat"><span class="stat-val accent" id="stat-tasks">0</span> TASKS</span>
+        <span class="stat-sep">|</span>
+        <span class="stat"><span class="stat-val green" id="stat-done">0</span> DONE</span>
+      </div>
+      <div class="header-right">
+        <span id="user-email" class="user-email"></span>
+        <button class="btn-scan" id="btn-scan">⟳ SCAN INBOX</button>
+        <a href="/auth/logout" class="btn-logout">EXIT</a>
+      </div>
+    </header>
+
+    <!-- Limit selector -->
+    <div class="scan-bar">
+      <span class="scan-label">SCAN DEPTH:</span>
+      <select id="email-limit" class="limit-select">
+        <option value="10">10 emails</option>
+        <option value="25" selected>25 emails</option>
+        <option value="50">50 emails</option>
+      </select>
+      <span class="scan-hint" id="scan-hint">// Last scan: never</span>
+    </div>
+
+    <!-- BETA bar -->
+    <div class="beta-bar" id="beta-bar">
+      <div class="beta-left">
+        <span class="beta-badge">BETA</span>
+        <span class="beta-label">AI Agent Mode — let the AI actually do your tasks</span>
+      </div>
+      <div class="beta-right">
+        <label class="beta-toggle-wrap">
+          <span class="beta-perm-label">Draft replies</span>
+          <input type="checkbox" class="beta-perm" data-perm="draft_replies" />
+          <span class="beta-slider"></span>
+        </label>
+        <label class="beta-toggle-wrap">
+          <span class="beta-perm-label">Auto-archive</span>
+          <input type="checkbox" class="beta-perm" data-perm="auto_archive" />
+          <span class="beta-slider"></span>
+        </label>
+        <label class="beta-toggle-wrap">
+          <span class="beta-perm-label">Mark read</span>
+          <input type="checkbox" class="beta-perm" data-perm="mark_read" />
+          <span class="beta-slider"></span>
+        </label>
+        <button class="btn-agent" id="btn-agent">⚡ RUN AGENT</button>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="tasks">
+        <span class="tab-icon">⚡</span> TASKS
+        <span class="tab-badge" id="tasks-badge">0</span>
+      </button>
+      <button class="tab" data-tab="brief">
+        <span class="tab-icon">📋</span> DAILY BRIEF
+      </button>
+      <button class="tab" data-tab="inbox">
+        <span class="tab-icon">✉</span> RAW INBOX
+        <span class="tab-badge" id="inbox-badge">0</span>
+      </button>
+      <button class="tab" data-tab="agent">
+        <span class="tab-icon">🤖</span> AGENT LOG
+        <span class="tab-badge" id="agent-badge">0</span>
+      </button>
+    </nav>
+
+    <!-- Tab Content -->
+    <main class="dash-main">
+
+      <!-- TASKS TAB -->
+      <div class="tab-content active" id="tab-tasks">
+        <div id="tasks-loading" class="loading-state hidden">
+          <div class="loading-bar">
+            <div class="loading-fill" id="loading-fill"></div>
+          </div>
+          <div class="loading-text" id="loading-text">INITIALIZING SCAN...</div>
+        </div>
+        <div id="tasks-empty" class="empty-state hidden">
+          <div class="empty-icon">📭</div>
+          <div class="empty-title">NO TASKS FOUND</div>
+          <div class="empty-sub">Your inbox is clear, soldier.</div>
+        </div>
+        <div id="tasks-error" class="error-state hidden">
+          <div class="error-icon">⚠</div>
+          <div class="error-msg" id="error-msg">Something went wrong.</div>
+          <button class="btn-retry" id="btn-retry">RETRY</button>
+        </div>
+        <div id="tasks-list">
+          <!-- Task filter bar -->
+          <div class="filter-bar" id="filter-bar" style="display:none">
+            <button class="filter active" data-filter="all">ALL</button>
+            <button class="filter" data-filter="HIGH">
+              <span class="dot red"></span> HIGH
+            </button>
+            <button class="filter" data-filter="MEDIUM">
+              <span class="dot amber"></span> MEDIUM
+            </button>
+            <button class="filter" data-filter="LOW">
+              <span class="dot green"></span> LOW
+            </button>
+            <button class="filter" data-filter="completed">✅ DONE</button>
+          </div>
+          <div id="tasks-container"></div>
+        </div>
+        <div id="tasks-placeholder" class="placeholder-state">
+          <div class="placeholder-icon">⚡</div>
+          <div class="placeholder-title">READY TO SCAN</div>
+          <div class="placeholder-sub">Hit <span class="accent">⟳ SCAN INBOX</span> to extract your tasks.</div>
+        </div>
+      </div>
+
+      <!-- BRIEF TAB -->
+      <div class="tab-content" id="tab-brief">
+        <div id="brief-placeholder" class="placeholder-state">
+          <div class="placeholder-icon">📋</div>
+          <div class="placeholder-title">NO BRIEF YET</div>
+          <div class="placeholder-sub">Scan your inbox first to generate today's brief.</div>
+        </div>
+        <div id="brief-content" class="brief-panel hidden">
+          <div class="brief-header">
+            <span class="brief-title">// DAILY BRIEF //</span>
+            <span class="brief-time" id="brief-time"></span>
+          </div>
+          <div class="brief-body" id="brief-body"></div>
+        </div>
+      </div>
+
+      <!-- INBOX TAB -->
+      <div class="tab-content" id="tab-inbox">
+        <div id="inbox-placeholder" class="placeholder-state">
+          <div class="placeholder-icon">✉</div>
+          <div class="placeholder-title">INBOX EMPTY</div>
+          <div class="placeholder-sub">Scan your inbox to see raw emails here.</div>
+        </div>
+        <div id="inbox-list"></div>
+      </div>
+
+      <!-- AGENT LOG TAB -->
+      <div class="tab-content" id="tab-agent">
+        <div id="agent-placeholder" class="placeholder-state">
+          <div class="placeholder-icon">🤖</div>
+          <div class="placeholder-title">AGENT HASN'T RUN YET</div>
+          <div class="placeholder-sub">Enable permissions above and click <span class="accent">⚡ RUN AGENT</span></div>
+        </div>
+        <div id="agent-running" class="placeholder-state hidden">
+          <div class="placeholder-icon">⚙️</div>
+          <div class="placeholder-title" id="agent-running-text">AGENT WORKING...</div>
+          <div class="placeholder-sub">Processing your emails one by one</div>
+        </div>
+        <div id="agent-log-list"></div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ── TASK DETAIL MODAL ── -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <button class="modal-close" id="modal-close">✕</button>
+      <div class="modal-priority" id="modal-priority"></div>
+      <div class="modal-title" id="modal-title"></div>
+      <div class="modal-detail" id="modal-detail"></div>
+      <div class="modal-meta">
+        <div class="modal-row"><span class="modal-label">FROM</span><span id="modal-from"></span></div>
+        <div class="modal-row"><span class="modal-label">SUBJECT</span><span id="modal-subject"></span></div>
+        <div class="modal-row" id="modal-deadline-row"><span class="modal-label">DEADLINE</span><span id="modal-deadline"></span></div>
+        <div class="modal-row"><span class="modal-label">CATEGORY</span><span id="modal-category"></span></div>
+      </div>
+      <button class="modal-done-btn" id="modal-done-btn">✓ MARK DONE</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
