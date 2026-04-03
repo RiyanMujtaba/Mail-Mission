@@ -25,6 +25,13 @@ app.use(session({
   cookie: { secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 } // 30 days
 }));
 
+// ── Allowed users ─────────────────────────────────────────────────
+// Add any Gmail address here to grant access. Your own is always allowed.
+const ALLOWED_EMAILS = [
+  'mujtabariyan91@gmail.com',   // you
+  'asad.lionpk@gmail.com', // add your brother's Gmail here
+];
+
 // ── Google OAuth2 ─────────────────────────────────────────────────
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -171,6 +178,12 @@ app.get('/auth/callback', async (req, res) => {
     oauth2Client.setCredentials(tokens);
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const { data } = await oauth2.userinfo.get();
+
+    if (!ALLOWED_EMAILS.includes(data.email)) {
+      req.session.destroy(() => {});
+      return res.redirect('/?error=not_invited');
+    }
+
     req.session.user = { name: data.name, email: data.email, picture: data.picture };
 
     res.redirect(req.session.betaAuthorized ? '/?beta_connected=1' : '/?connected=1');
