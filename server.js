@@ -547,22 +547,27 @@ Rules:
     const result = await groqCall(groqMsgs);
     let text = result.choices[0].message.content.trim();
 
-    // Try to extract JSON reply_ready block
-    const jsonMatch = text.match(/\{[\s\S]*?"type"\s*:\s*"reply_ready"[\s\S]*?\}/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return res.json({ type: 'reply_ready', text: parsed.message || 'Here\'s your reply!', reply: parsed.reply });
-      } catch {}
-    }
-    // Full response might be pure JSON
+    // Strip markdown code fences if model wrapped JSON in them
+    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+
+    // 1. Try parsing entire response as JSON
     try {
       const parsed = JSON.parse(text);
-      if (parsed.type === 'reply_ready') {
+      if (parsed.type === 'reply_ready' && parsed.reply) {
         return res.json({ type: 'reply_ready', text: parsed.message || 'Here\'s your reply!', reply: parsed.reply });
       }
     } catch {}
 
+    // 2. Try to extract a JSON block from mixed text (model sometimes adds explanation before/after)
+    const jsonMatch = text.match(/\{[^{}]*"type"\s*:\s*"reply_ready"[^{}]*"reply"\s*:[^{}]*\}/s);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed.reply) return res.json({ type: 'reply_ready', text: parsed.message || 'Here\'s your reply!', reply: parsed.reply });
+      } catch {}
+    }
+
+    // 3. Plain text response
     res.json({ type: 'message', text });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -744,9 +744,29 @@ document.querySelector('.btn-connect')?.addEventListener('click', (e) => {
 });
 
 // ── AI Chat ────────────────────────────────────────────────────
-let chatHistory   = [];   // [{role:'user'|'bot', text}]
-let chatEmail     = null; // selected email object
-let chatPending   = null; // {toAddr, threadId, subject, replyText} awaiting send
+let chatHistory = [];   // [{role:'user'|'bot', text}]
+let chatEmail   = null; // currently selected email
+let chatPending = null; // {toAddr, threadId, subject, replyText} — only set when reply is ready
+
+// ── Demo chatbot: simple state machine, no server needed ────────
+const DEMO_CHAT_STATE = { step: 'idle' }; // idle → asked_intent → replied
+function demoChatReply(userText) {
+  if (DEMO_CHAT_STATE.step === 'idle' || DEMO_CHAT_STATE.step === 'replied') {
+    if (!chatEmail) return { type: 'message', text: 'Pick an email from the dropdown above first — then tell me what you want to say!' };
+    DEMO_CHAT_STATE.step = 'asked_intent';
+    return { type: 'message', text: `Got the context. What's the main thing you want to say? (e.g. "confirm the meeting", "ask for more time", "say no politely")` };
+  }
+  if (DEMO_CHAT_STATE.step === 'asked_intent') {
+    DEMO_CHAT_STATE.step = 'replied';
+    const name = (chatEmail.from || '').replace(/<.*?>/, '').trim().split(/\s+/)[0];
+    const reply = `Hi ${name},\n\nThanks for reaching out. ${userText.charAt(0).toUpperCase() + userText.slice(1)}.\n\nPlease let me know if you need anything else.\n\nBest regards`;
+    return { type: 'reply_ready', text: `Here's a reply based on what you said — you can ask me to adjust it.`, reply };
+  }
+  // Refinement
+  const name = (chatEmail.from || '').replace(/<.*?>/, '').trim().split(/\s+/)[0];
+  const reply = `Hi ${name},\n\nThanks for your message. ${userText.charAt(0).toUpperCase() + userText.slice(1)}.\n\nLooking forward to hearing from you.\n\nBest regards`;
+  return { type: 'reply_ready', text: `Updated! Here's the revised reply:`, reply };
+}
 
 function initChat() {
   document.getElementById('chat-send')?.addEventListener('click', sendChatMsg);
@@ -769,15 +789,16 @@ function populateChatEmails() {
     opt.textContent = `${from} — ${subj}`;
     sel.appendChild(opt);
   });
-  if (prev) sel.value = prev;
+  if (prev !== undefined) sel.value = prev;
 }
 
 function onChatEmailChange() {
   const idx = document.getElementById('chat-email-select').value;
   if (idx === '') { chatEmail = null; return; }
   chatEmail = state.emails[parseInt(idx)];
+  DEMO_CHAT_STATE.step = 'idle';
   const name = (chatEmail.from || '').replace(/<.*?>/, '').trim().split(/\s+/)[0];
-  addBotMsg(`Got it — I'll help you reply to **${escHtml(name)}** about "${escHtml(chatEmail.subject)}". What do you want to say? Describe it in plain English (e.g. "confirm Thursday", "ask for more time", "say no politely").`);
+  addBotMsg(`Got it — replying to **${name}** about "${chatEmail.subject}". What do you want to say? Just describe it naturally.`);
 }
 
 function openChatWithEmail(emailSubject) {
@@ -785,34 +806,40 @@ function openChatWithEmail(emailSubject) {
   const idx = state.emails.findIndex(e => e.subject === emailSubject);
   if (idx === -1) return;
   const sel = document.getElementById('chat-email-select');
-  if (sel) { sel.value = idx; onChatEmailChange(); }
+  if (sel) { sel.value = String(idx); onChatEmailChange(); }
 }
 
 function addBotMsg(text, replyData = null) {
-  chatHistory.push({ role: 'bot', text: replyData ? (replyData.replyText || text) : text });
   const msgs = document.getElementById('chat-messages');
   if (!msgs) return;
+  // Store in history (use replyText as history content if it's a reply)
+  chatHistory.push({ role: 'bot', text: replyData ? replyData.replyText : text });
+
   const div = document.createElement('div');
   div.className = 'chat-msg bot';
-
-  // Convert **bold** markers
   const formatted = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
   if (replyData) {
-    const uid = Date.now();
+    const uid = `c${Date.now()}`;
     div.innerHTML = `
       <div class="chat-bubble">${formatted}</div>
       <div class="chat-reply-box">
         <pre class="chat-reply-text">${escHtml(replyData.replyText)}</pre>
         <div class="chat-reply-actions">
-          <button class="btn-chat-send" id="csr-${uid}">📤 SEND REPLY</button>
+          <button class="btn-chat-send" id="csr-${uid}">${state.demoMode ? '🔒 CONNECT GMAIL TO SEND' : '📤 SEND REPLY'}</button>
           <span class="chat-send-status" id="css-${uid}"></span>
         </div>
       </div>`;
     chatPending = replyData;
     msgs.appendChild(div);
     msgs.scrollTop = msgs.scrollHeight;
-    document.getElementById(`csr-${uid}`)?.addEventListener('click', () => doSendReply(uid));
+    if (!state.demoMode) {
+      document.getElementById(`csr-${uid}`)?.addEventListener('click', () => doSendReply(uid));
+    } else {
+      document.getElementById(`csr-${uid}`)?.addEventListener('click', () => {
+        addBotMsg('In demo mode replies can\'t be sent — connect your real Gmail to send!');
+      });
+    }
   } else {
     div.innerHTML = `<div class="chat-bubble">${formatted}</div>`;
     msgs.appendChild(div);
@@ -831,6 +858,16 @@ function addUserMsg(text) {
   msgs.scrollTop = msgs.scrollHeight;
 }
 
+function showTyping() {
+  const msgs = document.getElementById('chat-messages');
+  const el = document.createElement('div');
+  el.className = 'chat-msg bot chat-typing-row';
+  el.innerHTML = '<div class="chat-bubble chat-typing"><span></span><span></span><span></span></div>';
+  msgs.appendChild(el);
+  msgs.scrollTop = msgs.scrollHeight;
+  return el;
+}
+
 async function sendChatMsg() {
   const input = document.getElementById('chat-input');
   const text  = input?.value.trim();
@@ -838,42 +875,58 @@ async function sendChatMsg() {
   input.value = '';
   addUserMsg(text);
 
-  // Typing indicator
-  const msgs    = document.getElementById('chat-messages');
-  const typingEl = document.createElement('div');
-  typingEl.className = 'chat-msg bot';
-  typingEl.innerHTML = '<div class="chat-bubble chat-typing"><span></span><span></span><span></span></div>';
-  msgs.appendChild(typingEl);
-  msgs.scrollTop = msgs.scrollHeight;
+  const typingEl = showTyping();
 
-  try {
-    const res = await api('/api/chat', {
-      method: 'POST',
-      body: JSON.stringify({
-        messages: chatHistory.slice(-12),  // last 12 turns for context
-        email:    chatEmail || null,
-        demo:     state.demoMode || false
-      })
-    });
+  // Demo mode: local chatbot, no server
+  if (state.demoMode) {
+    await sleep(700 + Math.random() * 500);
     typingEl.remove();
-    if (res.error) { addBotMsg('Sorry, hit an error: ' + res.error); return; }
+    const res = demoChatReply(text);
+    if (res.type === 'reply_ready') {
+      addBotMsg(res.text, { toAddr: null, threadId: null, subject: chatEmail?.subject, replyText: res.reply });
+    } else {
+      addBotMsg(res.text);
+    }
+    return;
+  }
+
+  // Real mode: call server
+  try {
+    const raw = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: chatHistory.slice(-14), email: chatEmail || null })
+    });
+
+    typingEl.remove();
+
+    // Handle HTTP errors with a clear message
+    if (!raw.ok) {
+      if (raw.status === 401) { addBotMsg('You\'re not logged in — please connect your Gmail first.'); return; }
+      if (raw.status === 404) { addBotMsg('The chat endpoint wasn\'t found — please restart the server (`npm start`) and try again.'); return; }
+      addBotMsg(`Server error (${raw.status}) — check the terminal for details.`); return;
+    }
+
+    let res;
+    try { res = await raw.json(); }
+    catch { addBotMsg('Got a bad response from the server — please restart it and try again.'); return; }
+
+    if (res.error) { addBotMsg('AI error: ' + res.error); return; }
 
     if (res.type === 'reply_ready' && res.reply) {
       const toAddr = chatEmail
         ? (chatEmail.from.match(/<(.+?)>/) || [null, chatEmail.from])[1]
         : null;
       addBotMsg(res.text || 'Here\'s your reply!', {
-        toAddr,
-        threadId:  chatEmail?.threadId,
-        subject:   chatEmail?.subject,
-        replyText: res.reply
+        toAddr, threadId: chatEmail?.threadId, subject: chatEmail?.subject, replyText: res.reply
       });
     } else {
-      addBotMsg(res.text || 'Hmm, I got an empty response. Try again?');
+      addBotMsg(res.text || 'Hmm, I didn\'t quite get that. Try rephrasing?');
     }
   } catch (err) {
     typingEl.remove();
-    addBotMsg('Something went wrong. Make sure the server is running and try again.');
+    // Network error = server not running
+    addBotMsg('Can\'t reach the server — make sure it\'s running with `npm start` in the mail_mission folder.');
   }
 }
 
@@ -892,11 +945,11 @@ async function doSendReply(uid) {
     btn.textContent = '✅ SENT';
     if (statusEl) { statusEl.textContent = 'Sent!'; statusEl.style.color = 'var(--green)'; }
     chatPending = null;
-    setTimeout(() => addBotMsg('Reply sent! ✅ Anything else?'), 400);
+    setTimeout(() => addBotMsg('Reply sent! ✅ Want to reply to another email?'), 400);
   } catch (err) {
     btn.disabled    = false;
     btn.textContent = '📤 SEND REPLY';
-    if (statusEl) { statusEl.textContent = 'Failed: ' + err.message; statusEl.style.color = 'var(--red)'; }
+    if (statusEl) { statusEl.textContent = err.message; statusEl.style.color = 'var(--red)'; }
   }
 }
 
