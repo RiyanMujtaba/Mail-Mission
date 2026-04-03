@@ -934,17 +934,30 @@ async function sendChatMsg() {
     try { res = await raw.json(); }
     catch { addBotMsg('Got a bad response from the server — please restart it and try again.'); return; }
 
-    if (res.error) { addBotMsg('AI error: ' + res.error); return; }
+    if (res.error) { addBotMsg('ai error: ' + res.error); return; }
+
+    // Safety net: if server returned plain text that looks like raw JSON, parse it client-side
+    if (res.type === 'message' && res.text && res.text.trimStart().startsWith('{')) {
+      try {
+        const p = JSON.parse(res.text);
+        if (p.type === 'reply_ready' && p.reply) {
+          res = { type: 'reply_ready', text: p.message || 'here\'s your reply!', reply: p.reply };
+        }
+      } catch {}
+    }
 
     if (res.type === 'reply_ready' && res.reply) {
-      const toAddr = chatEmail
-        ? (chatEmail.from.match(/<(.+?)>/) || [null, chatEmail.from])[1]
-        : null;
-      addBotMsg(res.text || 'Here\'s your reply!', {
+      if (!chatEmail) {
+        // No email selected — don't show a reply box, just tell the user
+        addBotMsg('pick an email from the dropdown first, then i can write the reply!');
+        return;
+      }
+      const toAddr = (chatEmail.from.match(/<(.+?)>/) || [null, chatEmail.from])[1];
+      addBotMsg(res.text || 'here\'s your reply!', {
         toAddr, threadId: chatEmail?.threadId, subject: chatEmail?.subject, replyText: res.reply
       });
     } else {
-      addBotMsg(res.text || 'Hmm, I didn\'t quite get that. Try rephrasing?');
+      addBotMsg(res.text || 'hmm didn\'t quite get that, try rephrasing?');
     }
   } catch (err) {
     typingEl.remove();
@@ -1004,13 +1017,13 @@ async function actualSend(uid, btn, statusEl, sendData) {
     btn.textContent = '✅ sent';
     if (statusEl) { statusEl.textContent = ''; }
 
-    chatHistory.push({ role: 'bot', text: '[SENT] Reply was sent successfully.' });
     chatPending = null;
     chatEmail   = null;
+    chatHistory = []; // wipe history so old email context can't bleed into next chat
     const sel = document.getElementById('chat-email-select');
     if (sel) sel.value = '';
 
-    setTimeout(() => addBotMsg('sent! ✅ need anything else?'), 400);
+    setTimeout(() => addBotMsg('sent! ✅ want to reply to anything else?'), 400);
   } catch (err) {
     btn.disabled    = false;
     btn.textContent = '📤 SEND REPLY';

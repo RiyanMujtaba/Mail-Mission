@@ -522,24 +522,35 @@ app.post('/api/chat', async (req, res) => {
   const { messages = [], email } = req.body;
 
   const emailCtx = email
-    ? `Currently selected email — From: ${email.from} | Subject: ${email.subject} | Preview: ${(email.snippet||'').slice(0,250)}`
+    ? `From: ${email.from} | Subject: ${email.subject} | Preview: ${(email.snippet||'').slice(0,250)}`
     : null;
 
-  const system = `You are the AI inside Mail Mission — a smart, chill email assistant. Think: that friend who's great at writing emails and texts back fast.
+  const system = `You are the AI inside Mail Mission. You're chill, smart, and helpful — like a friend who's good at writing emails.
 
-Personality: lowercase-ish, punchy, occasionally witty. No jargon, no "certainly!", no corporate speak. Keep messages short.
+Tone: conversational, lowercase-ish, to the point. No "certainly!", no corporate fluff.
 
-${emailCtx ? `CURRENT EMAIL:\n${emailCtx}\n` : ''}
-HOW TO BEHAVE:
-- Chat naturally. If the user is just talking, talk back. Don't force them into reply-writing mode.
-- If the conversation has [SENT] in it: the reply was already sent. The job is done. Just vibe, answer questions, or wrap up. Never output reply_ready after [SENT].
-- If user says "that's all", "thanks", "bye", or anything closing — say a short friendly bye. No reply_ready.
-- If no email is selected and they want to write a reply: tell them to pick one from the dropdown above (keep it light).
-- If an email IS selected and you need their intent: ask casually, like "what's the gist of what you want to say?" — ONE question max.
-- Once you know the intent: write a complete, natural reply. Output ONLY this JSON on its own line (no markdown fences, no surrounding text):
-  {"type":"reply_ready","message":"<one casual line about what you wrote>","reply":"<the full email reply — no watermarks, no 'sent via' lines, sign off naturally>"}
-- For refinements ("make it shorter", "sound less formal", etc.): output a new reply_ready JSON block.
-- For all other responses: plain text only. Never JSON unless it's reply_ready.`;
+${emailCtx ? `=== EMAIL CURRENTLY OPEN ===\n${emailCtx}\n===========================\n` : '=== NO EMAIL SELECTED ===\n'}
+
+CRITICAL OUTPUT RULES — read carefully:
+
+1. PLAIN TEXT by default. Almost everything you say should be plain conversational text. No JSON.
+
+2. The ONLY time you output JSON is when ALL of these are true:
+   - An email IS shown above in "EMAIL CURRENTLY OPEN"
+   - The user has clearly told you what they want to say in the reply
+   - You are actually writing a reply right now
+   When those conditions are met, output ONLY this (nothing else on that response, no intro text):
+   {"type":"reply_ready","message":"one casual line","reply":"full reply text here"}
+
+3. If NO email is shown (NO EMAIL SELECTED): NEVER output JSON. Ever. Just chat normally.
+
+4. If history contains [SENT]: reply is done, forget the email, just chat. NO JSON.
+
+5. If user is just talking (hi, thanks, questions, random chat): respond in plain text. Do NOT write a reply. Do NOT output JSON.
+
+6. Refinements (shorter, formal, etc.): output new JSON only if an email is still open.
+
+7. Reply text: natural sign-off, no watermarks, no "sent via" lines.`;
 
   const groqMsgs = [
     { role: 'system', content: system },
@@ -550,27 +561,35 @@ HOW TO BEHAVE:
     const result = await groqCall(groqMsgs);
     let text = result.choices[0].message.content.trim();
 
-    // Strip markdown code fences if model wrapped JSON in them
+    // Strip markdown code fences
     text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
 
-    // 1. Try parsing entire response as JSON
-    try {
-      const parsed = JSON.parse(text);
-      if (parsed.type === 'reply_ready' && parsed.reply) {
-        return res.json({ type: 'reply_ready', text: parsed.message || 'Here\'s your reply!', reply: parsed.reply });
-      }
-    } catch {}
-
-    // 2. Try to extract a JSON block from mixed text (model sometimes adds explanation before/after)
-    const jsonMatch = text.match(/\{[^{}]*"type"\s*:\s*"reply_ready"[^{}]*"reply"\s*:[^{}]*\}/s);
-    if (jsonMatch) {
+    // Helper: try to extract + validate a reply_ready object
+    const tryParseReply = raw => {
       try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.reply) return res.json({ type: 'reply_ready', text: parsed.message || 'Here\'s your reply!', reply: parsed.reply });
+        const p = JSON.parse(raw);
+        if (p && p.type === 'reply_ready' && p.reply) return p;
       } catch {}
+      return null;
+    };
+
+    // 1. Full text is pure JSON
+    let parsed = tryParseReply(text);
+    if (parsed) return res.json({ type: 'reply_ready', text: parsed.message || 'here\'s your reply!', reply: parsed.reply });
+
+    // 2. JSON embedded in text — extract from first { to last }
+    const fi = text.indexOf('{'), li = text.lastIndexOf('}');
+    if (fi !== -1 && li > fi) {
+      parsed = tryParseReply(text.slice(fi, li + 1));
+      if (parsed) return res.json({ type: 'reply_ready', text: parsed.message || 'here\'s your reply!', reply: parsed.reply });
     }
 
-    // 3. Plain text response
+    // 3. If NO email was provided but text still looks like reply JSON, strip it out and respond plain
+    if (!email && text.includes('"type":"reply_ready"')) {
+      return res.json({ type: 'message', text: 'hey, pick an email from the dropdown first and i\'ll write the reply for you!' });
+    }
+
+    // 4. Plain text
     res.json({ type: 'message', text });
   } catch (err) {
     res.status(500).json({ error: err.message });
