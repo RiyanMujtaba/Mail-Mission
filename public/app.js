@@ -822,35 +822,28 @@ function renderAgentLog(log) {
         ${entry.preview ? `<div class="log-preview">${escHtml(entry.preview)}</div>` : ''}
         ${entry.action === 'proposed_reply' ? `
           <div class="log-actions" id="log-actions-${i}">
-            <button class="btn-create-draft" data-idx="${i}"
-              data-email-id="${escHtml(entry.emailId||'')}"
+            <button class="btn-send-direct" data-idx="${i}"
               data-thread-id="${escHtml(entry.threadId||'')}"
               data-to="${escHtml(entry.toAddr||'')}"
               data-subject="${escHtml(entry.subject||'')}"
-              data-reply="${escHtml(entry.preview||'')}">📝 CREATE DRAFT</button>
-            <span class="send-status" id="draft-status-${i}"></span>
-          </div>` : ''}
-        ${entry.action === 'draft_reply' && entry.draftId ? `
-          <div class="log-actions">
-            <button class="btn-send-draft" data-draft-id="${entry.draftId}">📤 SEND NOW</button>
-            <span class="send-status" id="send-status-${entry.draftId}"></span>
+              data-reply="${escHtml(entry.preview||'')}">📤 SEND REPLY</button>
+            <span class="send-status" id="send-status-${i}"></span>
           </div>` : ''}
       </div>
     </div>
   `).join('');
 
-  // Wire CREATE DRAFT buttons — creates draft only when user clicks
-  document.querySelectorAll('.btn-create-draft').forEach(btn => {
+  // Wire SEND REPLY buttons — sends directly, nothing saved to Gmail until clicked
+  document.querySelectorAll('.btn-send-direct').forEach(btn => {
     btn.addEventListener('click', async () => {
       const idx      = btn.dataset.idx;
-      const statusEl = document.getElementById(`draft-status-${idx}`);
+      const statusEl = document.getElementById(`send-status-${idx}`);
       btn.disabled   = true;
-      btn.textContent = '⏳ CREATING...';
+      btn.textContent = '⏳ SENDING...';
       try {
-        const result = await api('/api/beta/draft', {
+        const result = await api('/api/beta/send-direct', {
           method: 'POST',
           body: JSON.stringify({
-            emailId:   btn.dataset.emailId,
             threadId:  btn.dataset.threadId,
             toAddr:    btn.dataset.to,
             subject:   btn.dataset.subject,
@@ -858,42 +851,15 @@ function renderAgentLog(log) {
           })
         });
         if (result.error) throw new Error(result.error);
-        // Swap to SEND NOW button
-        const actionsEl = document.getElementById(`log-actions-${idx}`);
-        actionsEl.innerHTML = `
-          <button class="btn-send-draft" data-draft-id="${result.draftId}">📤 SEND NOW</button>
-          <span class="send-status" id="send-status-${result.draftId}">Draft saved in Gmail</span>`;
-        document.getElementById(`send-status-${result.draftId}`).style.color = 'var(--green)';
-        // Wire the new send button
-        actionsEl.querySelector('.btn-send-draft').addEventListener('click', sendDraftHandler);
+        btn.textContent = '✅ SENT';
+        if (statusEl) { statusEl.textContent = 'Reply sent!'; statusEl.style.color = 'var(--green)'; }
       } catch (err) {
         btn.disabled    = false;
-        btn.textContent = '📝 CREATE DRAFT';
-        statusEl.textContent = 'Failed: ' + err.message;
-        statusEl.style.color = 'var(--red)';
+        btn.textContent = '📤 SEND REPLY';
+        if (statusEl) { statusEl.textContent = 'Failed: ' + err.message; statusEl.style.color = 'var(--red)'; }
       }
     });
   });
-
-  // Wire existing SEND NOW buttons (for already-drafted entries)
-  document.querySelectorAll('.btn-send-draft').forEach(btn => btn.addEventListener('click', sendDraftHandler));
-}
-
-async function sendDraftHandler() {
-  const btn      = this;
-  const draftId  = btn.dataset.draftId;
-  const statusEl = document.getElementById(`send-status-${draftId}`);
-  btn.disabled   = true;
-  btn.textContent = '⏳ SENDING...';
-  try {
-    await api(`/api/beta/send/${draftId}`, { method: 'POST' });
-    btn.textContent = '✅ SENT';
-    if (statusEl) { statusEl.textContent = 'Sent!'; statusEl.style.color = 'var(--green)'; }
-  } catch (err) {
-    btn.disabled    = false;
-    btn.textContent = '📤 SEND NOW';
-    if (statusEl) { statusEl.textContent = 'Failed to send'; statusEl.style.color = 'var(--red)'; }
-  }
 }
 
 // ── Stats (localStorage) ───────────────────────────────────────

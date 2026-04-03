@@ -516,36 +516,21 @@ ${realEmails.map((e, i) => `[${i}] From: ${e.from}\nSubject: ${e.subject}\nMessa
   }
 });
 
-// ── BETA: Create a draft from a proposed reply ────────────────────
-app.post('/api/beta/draft', async (req, res) => {
+// ── BETA: Send reply directly — never touches Gmail drafts ───────
+// Reply text lives only in the website UI until the user clicks SEND.
+app.post('/api/beta/send-direct', async (req, res) => {
   if (!req.session.tokens) return res.status(401).json({ error: 'Not authenticated' });
-  const { emailId, threadId, toAddr, subject, replyText } = req.body;
+  const { threadId, toAddr, subject, replyText } = req.body;
   if (!toAddr || !replyText) return res.status(400).json({ error: 'Missing toAddr or replyText' });
   try {
     oauth2Client.setCredentials(req.session.tokens);
     const gmail   = google.gmail({ version: 'v1', auth: oauth2Client });
-    const body    = `${replyText}\n\n— Drafted by Mail Mission AI`;
+    const body    = `${replyText}\n\n— Sent via Mail Mission AI`;
     const rawMsg  = `To: ${toAddr}\r\nSubject: Re: ${subject || ''}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`;
     const encoded = Buffer.from(rawMsg).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
-    const draft   = await gmail.users.drafts.create({
+    await gmail.users.messages.send({
       userId: 'me',
-      requestBody: { message: { raw: encoded, ...(threadId ? { threadId } : {}) } }
-    });
-    res.json({ ok: true, draftId: draft.data.id });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── BETA: Send a saved draft ──────────────────────────────────────
-app.post('/api/beta/send/:draftId', async (req, res) => {
-  if (!req.session.tokens) return res.status(401).json({ error: 'Not authenticated' });
-  try {
-    oauth2Client.setCredentials(req.session.tokens);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-    await gmail.users.drafts.send({
-      userId: 'me',
-      requestBody: { id: req.params.draftId }
+      requestBody: { raw: encoded, ...(threadId ? { threadId } : {}) }
     });
     res.json({ ok: true });
   } catch (err) {
