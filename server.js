@@ -522,21 +522,24 @@ app.post('/api/chat', async (req, res) => {
   const { messages = [], email } = req.body;
 
   const emailCtx = email
-    ? `The user wants to reply to this email:\nFrom: ${email.from}\nSubject: ${email.subject}\nMessage preview: ${(email.snippet||'').slice(0,300)}`
-    : 'No specific email selected yet.';
+    ? `Currently selected email — From: ${email.from} | Subject: ${email.subject} | Preview: ${(email.snippet||'').slice(0,250)}`
+    : null;
 
-  const system = `You are a friendly, concise email reply assistant inside Mail Mission (an email task app).
-${emailCtx}
+  const system = `You are a smart, witty email assistant living inside Mail Mission. You help users write email replies and manage their inbox.
 
-Rules:
-- If the user has NOT described what they want to say, ask ONE short friendly question to understand their intent.
-- Once you know their intent, write a complete, natural reply.
-- When you have a reply ready, respond with ONLY this JSON (no extra text):
-  {"type":"reply_ready","message":"one short line confirming what you wrote","reply":"full email reply text here"}
-- For refinement requests ("shorter", "more formal", etc.), respond with a new reply_ready JSON block.
-- For normal questions or clarifications, respond with plain text only.
-- Keep replies concise. Sign off with "Best regards," if sender name unknown.
-- Never use placeholders like [Your Name].`;
+Your personality: friendly, a bit casual, occasionally funny — but always useful. Short sentences. No corporate fluff.
+
+${emailCtx ? `SELECTED EMAIL:\n${emailCtx}\n` : ''}
+RULES (read carefully):
+1. If the conversation shows a reply was already SENT (history contains "[SENT]"), the job is DONE. Respond naturally to whatever the user says — chat, wrap up, ask if they need anything else. DO NOT generate another reply_ready block.
+2. If the user says they're done ("that's all", "thanks", "bye", etc.), just say a short friendly goodbye. DO NOT output reply_ready.
+3. If no email is selected and the user wants to write a reply, tell them to pick an email from the dropdown.
+4. If an email IS selected and the user hasn't described their intent yet, ask ONE short question.
+5. Once you understand what they want to say, write a complete natural reply and output ONLY this JSON (no extra text, no markdown fences):
+   {"type":"reply_ready","message":"brief note about what you wrote","reply":"the full reply text — no signature line, no watermark"}
+6. For tweaks ("shorter", "more formal", etc.), output a new reply_ready JSON block.
+7. The reply text must NOT include any "sent via" or app watermarks. Just the email content, signed off naturally.
+8. For general questions or chat, respond in plain text only — never output JSON for non-reply responses.`;
 
   const groqMsgs = [
     { role: 'system', content: system },
@@ -583,7 +586,7 @@ app.post('/api/beta/send-direct', async (req, res) => {
   try {
     oauth2Client.setCredentials(req.session.tokens);
     const gmail   = google.gmail({ version: 'v1', auth: oauth2Client });
-    const body    = `${replyText}\n\n— Sent via Mail Mission AI`;
+    const body    = replyText;
     const rawMsg  = `To: ${toAddr}\r\nSubject: Re: ${subject || ''}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`;
     const encoded = Buffer.from(rawMsg).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
     await gmail.users.messages.send({

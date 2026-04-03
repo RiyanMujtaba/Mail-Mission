@@ -837,7 +837,12 @@ function addBotMsg(text, replyData = null) {
       document.getElementById(`csr-${uid}`)?.addEventListener('click', () => doSendReply(uid));
     } else {
       document.getElementById(`csr-${uid}`)?.addEventListener('click', () => {
-        addBotMsg('In demo mode replies can\'t be sent — connect your real Gmail to send!');
+        // Clear selection so bot doesn't loop on same email
+        chatEmail = null;
+        DEMO_CHAT_STATE.step = 'idle';
+        const sel = document.getElementById('chat-email-select');
+        if (sel) sel.value = '';
+        addBotMsg('In demo mode replies can\'t actually be sent — connect your real Gmail to do that! Want to try replying to another email?');
       });
     }
   } else {
@@ -944,8 +949,17 @@ async function doSendReply(uid) {
     if (res.error) throw new Error(res.error);
     btn.textContent = '✅ SENT';
     if (statusEl) { statusEl.textContent = 'Sent!'; statusEl.style.color = 'var(--green)'; }
+
+    // Mark conversation as done so the bot knows not to draft another reply
+    chatHistory.push({ role: 'bot', text: '[SENT] Reply was sent successfully.' });
     chatPending = null;
-    setTimeout(() => addBotMsg('Reply sent! ✅ Want to reply to another email?'), 400);
+
+    // Reset email selection so bot doesn't loop on the same email
+    chatEmail = null;
+    const sel = document.getElementById('chat-email-select');
+    if (sel) sel.value = '';
+
+    setTimeout(() => addBotMsg('Sent! ✅ Anything else I can help with?'), 400);
   } catch (err) {
     btn.disabled    = false;
     btn.textContent = '📤 SEND REPLY';
