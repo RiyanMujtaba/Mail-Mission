@@ -688,7 +688,9 @@ document.getElementById('modal-done-btn')?.addEventListener('click', () => {
 // ── Keyboard shortcuts ─────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeModal();
-  if (e.key === 's' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT') {
+  // Don't fire scan shortcut while a game is running
+  const gameActive = !document.getElementById('game-viewport')?.classList.contains('hidden');
+  if (e.key === 's' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT' && !gameActive) {
     scanInbox();
   }
 });

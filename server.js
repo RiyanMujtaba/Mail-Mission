@@ -554,7 +554,12 @@ CRITICAL OUTPUT RULES:
 
 5. User seems done with the email (moved on, said nah, changed subject) = acknowledge it lightly and follow their lead. Plain text. Don't loop back to the email.
 
-6. Reply text: natural sign-off, no watermarks, no app signatures.`;
+6. Reply text: natural sign-off ONLY. NEVER add any of these to the reply field:
+   - "Sent via Mail Mission AI"
+   - "Sent via Mail Mission"
+   - "— Mail Mission"
+   - Any app name, tool name, signature, or footer
+   The reply field must end with the person's natural sign-off and nothing else.`;
 
   const groqMsgs = [
     { role: 'system', content: system },
@@ -568,11 +573,21 @@ CRITICAL OUTPUT RULES:
     // Strip markdown code fences
     text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
 
+    // Strip watermark from any string (safety net — model sometimes ignores the instruction)
+    const stripWatermark = s => s
+      .replace(/\s*[-—]\s*sent via mail mission ai\s*/gi, '')
+      .replace(/\s*[-—]\s*sent via mail mission\s*/gi, '')
+      .replace(/\s*[-—]\s*mail mission\s*$/gi, '')
+      .trim();
+
     // Helper: try to extract + validate a reply_ready object
     const tryParseReply = raw => {
       try {
         const p = JSON.parse(raw);
-        if (p && p.type === 'reply_ready' && p.reply) return p;
+        if (p && p.type === 'reply_ready' && p.reply) {
+          p.reply = stripWatermark(p.reply);
+          return p;
+        }
       } catch {}
       return null;
     };

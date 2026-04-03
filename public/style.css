@@ -1958,13 +1958,83 @@ html, body {
   font-size: 10px;
   color: var(--amber);
 }
-.game-canvas-wrap { display: flex; justify-content: center; }
+.game-canvas-wrap { display: flex; justify-content: center; overflow: hidden; }
 #game-canvas {
   background: #000;
   border: 2px solid var(--border);
   max-width: 100%;
   display: block;
 }
+
+/* ── Game Pad ────────────────────────────────────────────────── */
+.game-pad {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 10px 8px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+@media (pointer: coarse) {
+  .game-pad { display: flex; }
+}
+.pb-row {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.pb {
+  width: 64px;
+  height: 64px;
+  background: rgba(255,255,255,0.07);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  color: var(--green);
+  font-family: 'Press Start 2P', monospace;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  transition: background 0.08s;
+}
+.pb:active, .pb.pressed {
+  background: rgba(255,255,255,0.2);
+  border-color: var(--green);
+}
+.pb-wide {
+  width: 160px;
+  height: 58px;
+}
+.pb-tall {
+  width: 80px;
+  height: 80px;
+  font-size: 20px;
+}
+.pb-shoot {
+  background: rgba(255, 60, 60, 0.15);
+  border-color: #ff4444;
+  color: #ff4444;
+  width: 72px;
+  height: 72px;
+}
+.pb-shoot:active, .pb-shoot.pressed {
+  background: rgba(255, 60, 60, 0.4);
+}
+/* D-pad for Snake */
+.pb-dpad {
+  display: grid;
+  grid-template-columns: 52px 52px 52px;
+  grid-template-rows: 52px 52px 52px;
+  gap: 4px;
+}
+.dpad-up    { grid-column: 2; grid-row: 1; }
+.dpad-lft   { grid-column: 1; grid-row: 2; }
+.dpad-mid   { grid-column: 2; grid-row: 2; background: rgba(255,255,255,0.03); border-color: transparent; pointer-events: none; }
+.dpad-rgt   { grid-column: 3; grid-row: 2; }
+.dpad-dn    { grid-column: 2; grid-row: 3; }
 
 /* ── Responsive ──────────────────────────────────────────────── */
 @media (max-width: 700px) {
@@ -1973,4 +2043,8 @@ html, body {
   .main-wrap { padding: 14px; }
   .task-card { flex-wrap: wrap; }
   .task-done-btn { width: 100%; text-align: center; }
+  #game-canvas { width: 100% !important; height: auto !important; }
+  .game-canvas-wrap { width: 100%; }
+  #page-games { padding: 8px; }
+  .game-viewport-header { margin-bottom: 6px; }
 }
