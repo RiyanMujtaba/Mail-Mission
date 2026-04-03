@@ -516,6 +516,59 @@ ${realEmails.map((e, i) => `[${i}] From: ${e.from}\nSubject: ${e.subject}\nMessa
   }
 });
 
+// ── API: AI Chat (reply assistant) ───────────────────────────────
+app.post('/api/chat', async (req, res) => {
+  if (!req.session.tokens && !req.body.demo) return res.status(401).json({ error: 'Not authenticated' });
+  const { messages = [], email } = req.body;
+
+  const emailCtx = email
+    ? `The user wants to reply to this email:\nFrom: ${email.from}\nSubject: ${email.subject}\nMessage preview: ${(email.snippet||'').slice(0,300)}`
+    : 'No specific email selected yet.';
+
+  const system = `You are a friendly, concise email reply assistant inside Mail Mission (an email task app).
+${emailCtx}
+
+Rules:
+- If the user has NOT described what they want to say, ask ONE short friendly question to understand their intent.
+- Once you know their intent, write a complete, natural reply.
+- When you have a reply ready, respond with ONLY this JSON (no extra text):
+  {"type":"reply_ready","message":"one short line confirming what you wrote","reply":"full email reply text here"}
+- For refinement requests ("shorter", "more formal", etc.), respond with a new reply_ready JSON block.
+- For normal questions or clarifications, respond with plain text only.
+- Keep replies concise. Sign off with "Best regards," if sender name unknown.
+- Never use placeholders like [Your Name].`;
+
+  const groqMsgs = [
+    { role: 'system', content: system },
+    ...messages.map(m => ({ role: m.role === 'bot' ? 'assistant' : 'user', content: m.text }))
+  ];
+
+  try {
+    const result = await groqCall(groqMsgs);
+    let text = result.choices[0].message.content.trim();
+
+    // Try to extract JSON reply_ready block
+    const jsonMatch = text.match(/\{[\s\S]*?"type"\s*:\s*"reply_ready"[\s\S]*?\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return res.json({ type: 'reply_ready', text: parsed.message || 'Here\'s your reply!', reply: parsed.reply });
+      } catch {}
+    }
+    // Full response might be pure JSON
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed.type === 'reply_ready') {
+        return res.json({ type: 'reply_ready', text: parsed.message || 'Here\'s your reply!', reply: parsed.reply });
+      }
+    } catch {}
+
+    res.json({ type: 'message', text });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── BETA: Send reply directly — never touches Gmail drafts ───────
 // Reply text lives only in the website UI until the user clicks SEND.
 app.post('/api/beta/send-direct', async (req, res) => {

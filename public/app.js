@@ -227,6 +227,7 @@ function applyResult(result) {
   renderTasks();
   renderBrief(result);
   renderInbox();
+  populateChatEmails();
 }
 
 // ── Render tasks ───────────────────────────────────────────────
@@ -274,6 +275,7 @@ function renderTasks() {
     const id = card.dataset.id;
     card.addEventListener('click', (e) => {
       if (e.target.classList.contains('task-done-btn')) return;
+      if (e.target.classList.contains('task-reply-btn')) return;
       openModal(id);
     });
   });
@@ -282,6 +284,14 @@ function renderTasks() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleDone(btn.dataset.id);
+    });
+  });
+
+  container.querySelectorAll('.task-reply-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      populateChatEmails();
+      openChatWithEmail(btn.dataset.subject);
     });
   });
 }
@@ -299,6 +309,9 @@ function taskCard(task, i = 0) {
           <span class="task-from">▶ ${escHtml(task.from)}</span>
           <span class="task-cat">${task.category}</span>
           ${task.deadline ? `<span class="task-deadline">⏰ ${escHtml(task.deadline)}</span>` : ''}
+        </div>
+        <div class="task-actions">
+          <button class="task-reply-btn" data-subject="${escHtml(task.emailSubject)}">✍ REPLY</button>
         </div>
       </div>
       <button class="task-done-btn ${isDone ? 'is-done' : ''}" data-id="${task.id}">
@@ -627,13 +640,6 @@ document.querySelectorAll('.sb-item').forEach(btn => {
   btn.addEventListener('click', () => switchPage(btn.dataset.page));
 });
 
-// BETA section toggle
-document.getElementById('sb-beta-toggle')?.addEventListener('click', () => {
-  const body  = document.getElementById('sb-beta-body');
-  const arrow = document.getElementById('sb-beta-arrow');
-  body.classList.toggle('hidden');
-  if (arrow) arrow.style.transform = body.classList.contains('hidden') ? '' : 'rotate(90deg)';
-});
 
 // ── Filters ────────────────────────────────────────────────────
 document.addEventListener('click', (e) => {
@@ -737,25 +743,167 @@ document.querySelector('.btn-connect')?.addEventListener('click', (e) => {
   }
 });
 
-// ── BETA Agent ─────────────────────────────────────────────────
-document.getElementById('btn-agent')?.addEventListener('click', runAgent);
+// ── AI Chat ────────────────────────────────────────────────────
+let chatHistory   = [];   // [{role:'user'|'bot', text}]
+let chatEmail     = null; // selected email object
+let chatPending   = null; // {toAddr, threadId, subject, replyText} awaiting send
 
-async function runAgent() {
-  if (!state.emails.length) {
-    alert('Scan your inbox first, then run the agent.');
-    return;
-  }
-
-  const perms = {};
-  document.querySelectorAll('.beta-perm').forEach(cb => {
-    perms[cb.dataset.perm] = cb.checked;
+function initChat() {
+  document.getElementById('chat-send')?.addEventListener('click', sendChatMsg);
+  document.getElementById('chat-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendChatMsg();
   });
+  document.getElementById('chat-email-select')?.addEventListener('change', onChatEmailChange);
+}
 
-  if (!perms.draft_replies && !perms.auto_archive && !perms.mark_read) {
-    alert('Enable at least one permission above before running the agent.');
-    return;
+function populateChatEmails() {
+  const sel = document.getElementById('chat-email-select');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— pick an email to reply to —</option>';
+  state.emails.forEach((e, i) => {
+    const from = (e.from || '').replace(/<.*?>/, '').trim().slice(0, 28);
+    const subj = (e.subject || '').slice(0, 38);
+    const opt  = document.createElement('option');
+    opt.value  = i;
+    opt.textContent = `${from} — ${subj}`;
+    sel.appendChild(opt);
+  });
+  if (prev) sel.value = prev;
+}
+
+function onChatEmailChange() {
+  const idx = document.getElementById('chat-email-select').value;
+  if (idx === '') { chatEmail = null; return; }
+  chatEmail = state.emails[parseInt(idx)];
+  const name = (chatEmail.from || '').replace(/<.*?>/, '').trim().split(/\s+/)[0];
+  addBotMsg(`Got it — I'll help you reply to **${escHtml(name)}** about "${escHtml(chatEmail.subject)}". What do you want to say? Describe it in plain English (e.g. "confirm Thursday", "ask for more time", "say no politely").`);
+}
+
+function openChatWithEmail(emailSubject) {
+  switchPage('agent');
+  const idx = state.emails.findIndex(e => e.subject === emailSubject);
+  if (idx === -1) return;
+  const sel = document.getElementById('chat-email-select');
+  if (sel) { sel.value = idx; onChatEmailChange(); }
+}
+
+function addBotMsg(text, replyData = null) {
+  chatHistory.push({ role: 'bot', text: replyData ? (replyData.replyText || text) : text });
+  const msgs = document.getElementById('chat-messages');
+  if (!msgs) return;
+  const div = document.createElement('div');
+  div.className = 'chat-msg bot';
+
+  // Convert **bold** markers
+  const formatted = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  if (replyData) {
+    const uid = Date.now();
+    div.innerHTML = `
+      <div class="chat-bubble">${formatted}</div>
+      <div class="chat-reply-box">
+        <pre class="chat-reply-text">${escHtml(replyData.replyText)}</pre>
+        <div class="chat-reply-actions">
+          <button class="btn-chat-send" id="csr-${uid}">📤 SEND REPLY</button>
+          <span class="chat-send-status" id="css-${uid}"></span>
+        </div>
+      </div>`;
+    chatPending = replyData;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+    document.getElementById(`csr-${uid}`)?.addEventListener('click', () => doSendReply(uid));
+  } else {
+    div.innerHTML = `<div class="chat-bubble">${formatted}</div>`;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
   }
+}
 
+function addUserMsg(text) {
+  chatHistory.push({ role: 'user', text });
+  const msgs = document.getElementById('chat-messages');
+  if (!msgs) return;
+  const div = document.createElement('div');
+  div.className = 'chat-msg user';
+  div.innerHTML = `<div class="chat-bubble">${escHtml(text)}</div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+async function sendChatMsg() {
+  const input = document.getElementById('chat-input');
+  const text  = input?.value.trim();
+  if (!text) return;
+  input.value = '';
+  addUserMsg(text);
+
+  // Typing indicator
+  const msgs    = document.getElementById('chat-messages');
+  const typingEl = document.createElement('div');
+  typingEl.className = 'chat-msg bot';
+  typingEl.innerHTML = '<div class="chat-bubble chat-typing"><span></span><span></span><span></span></div>';
+  msgs.appendChild(typingEl);
+  msgs.scrollTop = msgs.scrollHeight;
+
+  try {
+    const res = await api('/api/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        messages: chatHistory.slice(-12),  // last 12 turns for context
+        email:    chatEmail || null,
+        demo:     state.demoMode || false
+      })
+    });
+    typingEl.remove();
+    if (res.error) { addBotMsg('Sorry, hit an error: ' + res.error); return; }
+
+    if (res.type === 'reply_ready' && res.reply) {
+      const toAddr = chatEmail
+        ? (chatEmail.from.match(/<(.+?)>/) || [null, chatEmail.from])[1]
+        : null;
+      addBotMsg(res.text || 'Here\'s your reply!', {
+        toAddr,
+        threadId:  chatEmail?.threadId,
+        subject:   chatEmail?.subject,
+        replyText: res.reply
+      });
+    } else {
+      addBotMsg(res.text || 'Hmm, I got an empty response. Try again?');
+    }
+  } catch (err) {
+    typingEl.remove();
+    addBotMsg('Something went wrong. Make sure the server is running and try again.');
+  }
+}
+
+async function doSendReply(uid) {
+  const btn      = document.getElementById(`csr-${uid}`);
+  const statusEl = document.getElementById(`css-${uid}`);
+  if (!chatPending || !btn) return;
+  btn.disabled    = true;
+  btn.textContent = '⏳ SENDING...';
+  try {
+    const res = await api('/api/beta/send-direct', {
+      method: 'POST',
+      body: JSON.stringify(chatPending)
+    });
+    if (res.error) throw new Error(res.error);
+    btn.textContent = '✅ SENT';
+    if (statusEl) { statusEl.textContent = 'Sent!'; statusEl.style.color = 'var(--green)'; }
+    chatPending = null;
+    setTimeout(() => addBotMsg('Reply sent! ✅ Anything else?'), 400);
+  } catch (err) {
+    btn.disabled    = false;
+    btn.textContent = '📤 SEND REPLY';
+    if (statusEl) { statusEl.textContent = 'Failed: ' + err.message; statusEl.style.color = 'var(--red)'; }
+  }
+}
+
+initChat();
+
+// ── (old BETA agent placeholder — kept for reference, not used) ───
+async function runAgent() {
   const btn = document.getElementById('btn-agent');
   btn.disabled    = true;
   btn.textContent = '⚙ RUNNING...';

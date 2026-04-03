@@ -124,9 +124,8 @@
             <span class="tab-badge" id="inbox-badge">0</span>
           </button>
           <button class="sb-item" data-page="agent">
-            <span class="sb-icon">🤖</span>
-            <span class="sb-label">AGENT LOG</span>
-            <span class="tab-badge" id="agent-badge">0</span>
+            <span class="sb-icon">💬</span>
+            <span class="sb-label">AI CHAT</span>
           </button>
           <button class="sb-item" data-page="stats">
             <span class="sb-icon">📊</span>
@@ -137,35 +136,6 @@
             <span class="sb-label">GAMES</span>
           </button>
         </nav>
-
-        <!-- BETA section (collapsible) -->
-        <div class="sb-beta">
-          <button class="sb-beta-toggle" id="sb-beta-toggle">
-            <span class="beta-badge">BETA</span>
-            <span class="sb-beta-label">AI AGENT MODE</span>
-            <span class="sb-beta-arrow" id="sb-beta-arrow">▶</span>
-          </button>
-          <div class="sb-beta-body hidden" id="sb-beta-body">
-            <div class="sb-beta-desc">Let the AI do your tasks</div>
-            <label class="beta-toggle-wrap">
-              <span class="beta-perm-label">Draft replies</span>
-              <input type="checkbox" class="beta-perm" data-perm="draft_replies" />
-              <span class="beta-slider"></span>
-            </label>
-            <label class="beta-toggle-wrap">
-              <span class="beta-perm-label">Auto-archive</span>
-              <input type="checkbox" class="beta-perm" data-perm="auto_archive" />
-              <span class="beta-slider"></span>
-            </label>
-            <label class="beta-toggle-wrap">
-              <span class="beta-perm-label">Mark read</span>
-              <input type="checkbox" class="beta-perm" data-perm="mark_read" />
-              <span class="beta-slider"></span>
-            </label>
-            <a href="/auth/google-beta" class="btn-grant" id="btn-grant-perms" style="display:none">🔑 GRANT PERMS</a>
-            <button class="btn-agent" id="btn-agent">⚡ RUN AGENT</button>
-          </div>
-        </div>
 
         <!-- Footer -->
         <div class="sb-footer">
@@ -264,28 +234,25 @@
           <div id="inbox-list"></div>
         </div>
 
-        <!-- AGENT LOG PAGE -->
+        <!-- AI CHAT PAGE -->
         <div class="page-panel" id="tab-agent">
-          <div id="agent-placeholder" class="placeholder-state">
-            <div class="placeholder-icon">🤖</div>
-            <div class="placeholder-title">AGENT HASN'T RUN YET</div>
-            <div class="placeholder-sub">Enable permissions in the sidebar and click <span class="accent">⚡ RUN AGENT</span></div>
-          </div>
-          <div id="agent-running" class="placeholder-state hidden">
-            <div class="agent-bot-wrap">
-              <div class="agent-bot-body">
-                <div class="agent-bot-eyes">• •</div>
-                <div class="agent-bot-mouth">‿</div>
-              </div>
-              <div class="agent-bot-arm left-arm">╱</div>
-              <div class="agent-bot-arm right-arm">╲</div>
-              <div class="agent-bot-legs">┃┃</div>
-              <div class="agent-mail-float">📧</div>
+          <div class="chat-wrap">
+            <div class="chat-email-picker">
+              <span class="chat-email-label">REPLY TO:</span>
+              <select id="chat-email-select" class="chat-email-select">
+                <option value="">— scan inbox first, then pick an email —</option>
+              </select>
             </div>
-            <div class="placeholder-title" id="agent-running-text">AGENT WORKING...</div>
-            <div class="placeholder-sub">Your little robot is on it 🤖</div>
+            <div class="chat-messages" id="chat-messages">
+              <div class="chat-msg bot">
+                <div class="chat-bubble">Hi! 👋 Select an email above and tell me what you want to say — I'll write the reply for you. No drafts, nothing goes to Gmail until you hit <strong>SEND</strong>.</div>
+              </div>
+            </div>
+            <div class="chat-input-bar">
+              <input type="text" id="chat-input" class="chat-input" placeholder="e.g. confirm the meeting, ask for more time, politely decline..." autocomplete="off" />
+              <button id="chat-send" class="chat-send-btn">SEND</button>
+            </div>
           </div>
-          <div id="agent-log-list"></div>
         </div>
 
         <!-- STATS PAGE -->
