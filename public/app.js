@@ -809,18 +809,28 @@ async function runAgent() {
 }
 
 function renderAgentLog(log) {
-  const icons  = { draft_reply: '✍️', archive: '📦', mark_read: '👁', none: '–', error: '⚠️' };
-  const labels = { draft_reply: 'DRAFTED REPLY', archive: 'ARCHIVED', mark_read: 'MARKED READ', none: 'SKIPPED', error: 'ERROR' };
+  const icons  = { proposed_reply: '✍️', draft_reply: '✍️', archive: '📦', mark_read: '👁', none: '–', error: '⚠️' };
+  const labels = { proposed_reply: 'REPLY READY', draft_reply: 'DRAFTED', archive: 'ARCHIVED', mark_read: 'MARKED READ', none: 'SKIPPED', error: 'ERROR' };
 
   document.getElementById('agent-log-list').innerHTML = log.map((entry, i) => `
-    <div class="log-item" data-draft-id="${entry.draftId || ''}" style="animation-delay:${i * 0.07}s">
+    <div class="log-item" id="log-item-${i}" style="animation-delay:${i * 0.07}s">
       <div class="log-icon">${icons[entry.action] || '•'}</div>
       <div class="log-body">
         <span class="log-action ${entry.action}">${labels[entry.action] || entry.action}</span>
         <div class="log-subject">${escHtml(entry.subject)}</div>
         <div class="log-reason">${escHtml(entry.from || '')}${entry.date ? ' · ' + escHtml(fmtDate(entry.date)) : ''} — ${escHtml(entry.reason)}</div>
         ${entry.preview ? `<div class="log-preview">${escHtml(entry.preview)}</div>` : ''}
-        ${entry.draftId ? `
+        ${entry.action === 'proposed_reply' ? `
+          <div class="log-actions" id="log-actions-${i}">
+            <button class="btn-create-draft" data-idx="${i}"
+              data-email-id="${escHtml(entry.emailId||'')}"
+              data-thread-id="${escHtml(entry.threadId||'')}"
+              data-to="${escHtml(entry.toAddr||'')}"
+              data-subject="${escHtml(entry.subject||'')}"
+              data-reply="${escHtml(entry.preview||'')}">📝 CREATE DRAFT</button>
+            <span class="send-status" id="draft-status-${i}"></span>
+          </div>` : ''}
+        ${entry.action === 'draft_reply' && entry.draftId ? `
           <div class="log-actions">
             <button class="btn-send-draft" data-draft-id="${entry.draftId}">📤 SEND NOW</button>
             <span class="send-status" id="send-status-${entry.draftId}"></span>
@@ -829,26 +839,61 @@ function renderAgentLog(log) {
     </div>
   `).join('');
 
-  // Wire send buttons
-  document.querySelectorAll('.btn-send-draft').forEach(btn => {
+  // Wire CREATE DRAFT buttons — creates draft only when user clicks
+  document.querySelectorAll('.btn-create-draft').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const draftId  = btn.dataset.draftId;
-      const statusEl = document.getElementById(`send-status-${draftId}`);
+      const idx      = btn.dataset.idx;
+      const statusEl = document.getElementById(`draft-status-${idx}`);
       btn.disabled   = true;
-      btn.textContent = '⏳ SENDING...';
+      btn.textContent = '⏳ CREATING...';
       try {
-        await api(`/api/beta/send/${draftId}`, { method: 'POST' });
-        btn.textContent  = '✅ SENT';
-        statusEl.textContent = 'Reply sent successfully';
-        statusEl.style.color = 'var(--green)';
+        const result = await api('/api/beta/draft', {
+          method: 'POST',
+          body: JSON.stringify({
+            emailId:   btn.dataset.emailId,
+            threadId:  btn.dataset.threadId,
+            toAddr:    btn.dataset.to,
+            subject:   btn.dataset.subject,
+            replyText: btn.dataset.reply
+          })
+        });
+        if (result.error) throw new Error(result.error);
+        // Swap to SEND NOW button
+        const actionsEl = document.getElementById(`log-actions-${idx}`);
+        actionsEl.innerHTML = `
+          <button class="btn-send-draft" data-draft-id="${result.draftId}">📤 SEND NOW</button>
+          <span class="send-status" id="send-status-${result.draftId}">Draft saved in Gmail</span>`;
+        document.getElementById(`send-status-${result.draftId}`).style.color = 'var(--green)';
+        // Wire the new send button
+        actionsEl.querySelector('.btn-send-draft').addEventListener('click', sendDraftHandler);
       } catch (err) {
         btn.disabled    = false;
-        btn.textContent = '📤 SEND NOW';
-        statusEl.textContent = 'Failed to send';
+        btn.textContent = '📝 CREATE DRAFT';
+        statusEl.textContent = 'Failed: ' + err.message;
         statusEl.style.color = 'var(--red)';
       }
     });
   });
+
+  // Wire existing SEND NOW buttons (for already-drafted entries)
+  document.querySelectorAll('.btn-send-draft').forEach(btn => btn.addEventListener('click', sendDraftHandler));
+}
+
+async function sendDraftHandler() {
+  const btn      = this;
+  const draftId  = btn.dataset.draftId;
+  const statusEl = document.getElementById(`send-status-${draftId}`);
+  btn.disabled   = true;
+  btn.textContent = '⏳ SENDING...';
+  try {
+    await api(`/api/beta/send/${draftId}`, { method: 'POST' });
+    btn.textContent = '✅ SENT';
+    if (statusEl) { statusEl.textContent = 'Sent!'; statusEl.style.color = 'var(--green)'; }
+  } catch (err) {
+    btn.disabled    = false;
+    btn.textContent = '📤 SEND NOW';
+    if (statusEl) { statusEl.textContent = 'Failed to send'; statusEl.style.color = 'var(--red)'; }
+  }
 }
 
 // ── Stats (localStorage) ───────────────────────────────────────

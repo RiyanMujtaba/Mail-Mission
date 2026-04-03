@@ -274,11 +274,19 @@ app.post('/api/analyze', async (req, res) => {
     const sid       = req.session.id;
     const completed = completedStore.get(sid) || new Set();
 
-    // ── Detect promos server-side — conservative, only obvious automation ──
+    // ── Detect promos server-side ──────────────────────────────────────────
     const isPromo = e => {
       const addr = ((e.from || '').match(/<(.+?)>/) || [])[1] || e.from || '';
-      return /^(noreply|no-reply|donotreply|do-not-reply|notifications?|newsletter|mailer-daemon|bounce|postmaster|alerts?)@/i.test(addr)
-          || /@(amazonses|sendgrid|mailchimp|constantcontact|klaviyo|mailgun|sparkpost)\./i.test(addr);
+      const subj = (e.subject || '').toLowerCase();
+      // Automated/marketing sender prefixes
+      if (/^(noreply|no-reply|donotreply|do-not-reply|notifications?|newsletter|mailer-daemon|bounce|postmaster|alerts?|promotions?|deals?|offers?|coupons?|savings?|discounts?|specials?|unsubscribe|marketing|promo|shop|store|news|digest|weekly|daily|monthly)@/i.test(addr)) return true;
+      // Known ESP / marketing infrastructure domains
+      if (/@(amazonses|sendgrid|mailchimp|constantcontact|klaviyo|mailgun|sparkpost|salesforce|hubspot|marketo|braze|iterable|omnisend|drip|activecampaign|campaignmonitor|sailthru|moengage|blueshift|emarsys|responsys|exacttarget)\./i.test(addr)) return true;
+      // Marketing subdomain patterns: email@em.target.com, email@e.amazon.com, email@email.brand.com
+      if (/^[^@]+@(em\d*|email|e|mktg|marketing|promo|news|deals|offers|shop)\./i.test(addr)) return true;
+      // Subject-based: clearly promotional (discount/sale language only — not invoice/order/payment)
+      if (/(\d+%\s*off|\bflash sale\b|\bblack friday\b|\bcyber monday\b|\bsummer sale\b|\bwinter sale\b|\bclearance sale\b|\bfree shipping\b|\bcoupon code\b|\bpromo code\b|\bdiscount code\b|\bspecial offer\b|\bexclusive (deal|offer)\b|\blimited time offer\b|\bshop now\b)/i.test(subj)) return true;
+      return false;
     };
     const promoEmails = emails.filter(e => isPromo(e));
     const realEmails  = emails.filter(e => !isPromo(e));
@@ -293,8 +301,8 @@ Each object: {"i":0,"title":"short action phrase","detail":"one sentence what to
 i = the email index from the list.
 priority: HIGH=urgent/overdue/from boss, MEDIUM=needs reply/review, LOW=FYI
 category: REPLY/ACTION/DEADLINE/REVIEW/INFO
-INCLUDE every email — be generous. If a real person sent it, it's a task.
-SKIP only: automated system emails with no human name in the sender.
+INCLUDE: emails from real people or businesses needing a real response.
+SKIP completely (return nothing for these): promotional/marketing emails, sale/discount offers, newsletters, shipping notifications, order confirmations, automated billing summaries, subscription digests, or any email whose subject contains "% off", "sale", "deal", "coupon", "promo", "newsletter", "unsubscribe", "free shipping", or similar promotional language.
 Emails:
 ${emailLines}`;
 
@@ -426,8 +434,12 @@ app.post('/api/beta/run', async (req, res) => {
     // Split emails: real people vs automated
     const isAutoSender = e => {
       const addr = ((e.from || '').match(/<(.+?)>/) || [])[1] || e.from || '';
-      return /^(noreply|no-reply|donotreply|notifications?|newsletter|mailer-daemon|bounce|alerts?)@/i.test(addr)
-          || /@(amazonses|sendgrid|mailchimp|constantcontact|klaviyo|mailgun|sparkpost)\./i.test(addr);
+      const subj = (e.subject || '').toLowerCase();
+      if (/^(noreply|no-reply|donotreply|do-not-reply|notifications?|newsletter|mailer-daemon|bounce|postmaster|alerts?|promotions?|deals?|offers?|coupons?|savings?|discounts?|specials?|unsubscribe|marketing|promo|shop|store|news|digest|weekly|daily|monthly)@/i.test(addr)) return true;
+      if (/@(amazonses|sendgrid|mailchimp|constantcontact|klaviyo|mailgun|sparkpost|salesforce|hubspot|marketo|braze|iterable|omnisend|drip|activecampaign|campaignmonitor|sailthru|moengage|blueshift|emarsys|responsys|exacttarget)\./i.test(addr)) return true;
+      if (/^[^@]+@(em\d*|email|e|mktg|marketing|promo|news|deals|offers|shop)\./i.test(addr)) return true;
+      if (/(\d+%\s*off|\bflash sale\b|\bblack friday\b|\bcyber monday\b|\bsummer sale\b|\bwinter sale\b|\bclearance sale\b|\bfree shipping\b|\bcoupon code\b|\bpromo code\b|\bdiscount code\b|\bspecial offer\b|\bexclusive (deal|offer)\b|\blimited time offer\b|\bshop now\b)/i.test(subj)) return true;
+      return false;
     };
     const realEmails  = emails.filter(e => !isAutoSender(e));
     const autoEmails  = emails.filter(e =>  isAutoSender(e));
@@ -448,23 +460,25 @@ ${realEmails.map((e, i) => `[${i}] From: ${e.from}\nSubject: ${e.subject}\nMessa
       catch { const m = txt.match(/\[[\s\S]*\]/); if (m) try { replies = JSON.parse(m[0]); } catch {} }
       if (!Array.isArray(replies)) replies = [];
 
-      await Promise.all(realEmails.map(async (email, idx) => {
+      realEmails.forEach((email, idx) => {
         const r = replies.find(x => x.index === idx) || replies[idx];
         if (!r?.reply) {
-          log.push({ emailId: email.id, subject: email.subject, from: email.from, date: email.date, action: 'none', reason: 'AI did not generate a reply' });
+          log.push({ emailId: email.id, threadId: email.threadId, subject: email.subject, from: email.from, date: email.date, action: 'none', reason: 'AI could not generate a reply for this email' });
           return;
         }
-        try {
-          const toAddr   = (email.from.match(/<(.+?)>/) || [null, email.from])[1];
-          const body     = `${r.reply}\n\n— Drafted by Mail Mission AI`;
-          const rawMsg   = `To: ${toAddr}\r\nSubject: Re: ${email.subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`;
-          const encoded  = Buffer.from(rawMsg).toString('base64').replace(/\+/g,'-').replace(/\//g,'_');
-          const draft    = await gmail.users.drafts.create({ userId:'me', requestBody:{ message:{ raw:encoded, threadId:email.threadId } } });
-          log.push({ emailId:email.id, subject:email.subject, from:email.from, date:email.date, action:'draft_reply', reason:r.reason||'Reply drafted', preview:r.reply, draftId:draft.data.id });
-        } catch(e) {
-          log.push({ emailId:email.id, subject:email.subject, from:email.from, date:email.date, action:'error', reason:e.message });
-        }
-      }));
+        const toAddr = (email.from.match(/<(.+?)>/) || [null, email.from])[1];
+        log.push({
+          emailId:   email.id,
+          threadId:  email.threadId,
+          subject:   email.subject,
+          from:      email.from,
+          toAddr,
+          date:      email.date,
+          action:    'proposed_reply',
+          reason:    r.reason || 'Reply ready to draft',
+          preview:   r.reply
+        });
+      });
     } else if (!perms.draft_replies) {
       // No draft permission — just log real emails as needing review
       realEmails.forEach(email => {
@@ -498,6 +512,27 @@ ${realEmails.map((e, i) => `[${i}] From: ${e.from}\nSubject: ${e.subject}\nMessa
 
   } catch (err) {
     console.error('BETA agent error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── BETA: Create a draft from a proposed reply ────────────────────
+app.post('/api/beta/draft', async (req, res) => {
+  if (!req.session.tokens) return res.status(401).json({ error: 'Not authenticated' });
+  const { emailId, threadId, toAddr, subject, replyText } = req.body;
+  if (!toAddr || !replyText) return res.status(400).json({ error: 'Missing toAddr or replyText' });
+  try {
+    oauth2Client.setCredentials(req.session.tokens);
+    const gmail   = google.gmail({ version: 'v1', auth: oauth2Client });
+    const body    = `${replyText}\n\n— Drafted by Mail Mission AI`;
+    const rawMsg  = `To: ${toAddr}\r\nSubject: Re: ${subject || ''}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`;
+    const encoded = Buffer.from(rawMsg).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
+    const draft   = await gmail.users.drafts.create({
+      userId: 'me',
+      requestBody: { message: { raw: encoded, ...(threadId ? { threadId } : {}) } }
+    });
+    res.json({ ok: true, draftId: draft.data.id });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
