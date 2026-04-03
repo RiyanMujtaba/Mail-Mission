@@ -58,18 +58,18 @@
   --text:      #ffd6c0;
 }
 
-/* ── Theme: Ocean ────────────────────────────────────────────── */
+/* ── Theme: Neon Pink ────────────────────────────────────────── */
 [data-theme="ocean"] {
-  --bg:        #030d14;
-  --surface:   #071a26;
-  --surface2:  #0a2233;
-  --border:    #0d3348;
-  --green:     #00c9a7;
-  --green-dim: #004d3f;
-  --amber:     #4fc3f7;
-  --red:       #ff6b9d;
-  --muted:     #1d5e6e;
-  --text:      #b2eaf5;
+  --bg:        #0d0010;
+  --surface:   #180020;
+  --surface2:  #200030;
+  --border:    #3a0050;
+  --green:     #ff2d9b;
+  --green-dim: #5c0033;
+  --amber:     #bf5fff;
+  --red:       #ff5e5e;
+  --muted:     #7a1a5e;
+  --text:      #ffc8f0;
 }
 
 /* ── CRT off for non-retro themes ────────────────────────────── */
@@ -163,12 +163,12 @@ body[data-theme="futuristic"]::before {
 .theme-dot[data-theme="dark"]       { background: #818cf8; box-shadow: 0 0 6px #818cf8; }
 .theme-dot[data-theme="futuristic"] { background: #00fff0; box-shadow: 0 0 6px #00fff0; }
 .theme-dot[data-theme="sunset"]     { background: #ff7b54; box-shadow: 0 0 6px #ff7b54; }
-.theme-dot[data-theme="ocean"]      { background: #00c9a7; box-shadow: 0 0 6px #00c9a7; }
+.theme-dot[data-theme="ocean"]      { background: #ff2d9b; box-shadow: 0 0 6px #ff2d9b; }
 .theme-dot.active[data-theme="retro"]      { box-shadow: 0 0 10px #39ff14; }
 .theme-dot.active[data-theme="dark"]       { box-shadow: 0 0 10px #818cf8; }
 .theme-dot.active[data-theme="futuristic"] { box-shadow: 0 0 10px #00fff0; }
 .theme-dot.active[data-theme="sunset"]     { box-shadow: 0 0 10px #ff7b54; }
-.theme-dot.active[data-theme="ocean"]      { box-shadow: 0 0 10px #00c9a7; }
+.theme-dot.active[data-theme="ocean"]      { box-shadow: 0 0 10px #ff2d9b; }
 
 /* ── Sunset theme glows ──────────────────────────────────────── */
 [data-theme="sunset"] .sb-logo-text,
@@ -180,16 +180,16 @@ body[data-theme="futuristic"]::before {
 }
 [data-theme="sunset"] .btn-scan:not(:disabled):hover { box-shadow: 0 0 18px rgba(255,123,84,0.5); }
 
-/* ── Ocean theme glows ───────────────────────────────────────── */
+/* ── Neon Pink theme glows ───────────────────────────────────── */
 [data-theme="ocean"] .sb-logo-text,
 [data-theme="ocean"] .page-title,
-[data-theme="ocean"] .stats-header { text-shadow: 0 0 12px rgba(0,201,167,0.5); }
+[data-theme="ocean"] .stats-header { text-shadow: 0 0 12px rgba(255,45,155,0.5); }
 [data-theme="ocean"] .btn-scan:not(:disabled) {
   animation: none;
-  box-shadow: 0 0 0 1px #00c9a7;
+  box-shadow: 0 0 0 1px #ff2d9b;
 }
-[data-theme="ocean"] .btn-scan:not(:disabled):hover { box-shadow: 0 0 18px rgba(0,201,167,0.5); }
-[data-theme="ocean"] .sidebar { border-right-color: rgba(0,201,167,0.3); }
+[data-theme="ocean"] .btn-scan:not(:disabled):hover { box-shadow: 0 0 18px rgba(255,45,155,0.5); }
+[data-theme="ocean"] .sidebar { border-right-color: rgba(255,45,155,0.2); }
 
 html, body {
   height: 100%;
