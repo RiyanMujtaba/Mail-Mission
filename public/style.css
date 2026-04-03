@@ -1246,6 +1246,25 @@ html, body {
 }
 .chat-email-select:focus { border-color: var(--green); }
 
+.chat-email-clear {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-email-clear:hover { border-color: var(--red); color: var(--red); background: rgba(255,60,60,0.08); }
+.chat-email-clear.hidden { display: none; }
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;

@@ -774,6 +774,17 @@ function initChat() {
     if (e.key === 'Enter') sendChatMsg();
   });
   document.getElementById('chat-email-select')?.addEventListener('change', onChatEmailChange);
+  document.getElementById('chat-email-clear')?.addEventListener('click', dropChatEmail);
+}
+
+function dropChatEmail(silent = false) {
+  chatEmail = null;
+  DEMO_CHAT_STATE.step = 'idle';
+  const sel = document.getElementById('chat-email-select');
+  if (sel) sel.value = '';
+  document.getElementById('chat-email-clear')?.classList.add('hidden');
+  chatHistory.push({ role: 'bot', text: '[EMAIL_DROPPED]' });
+  if (!silent) addBotMsg('no worries, dropped it. what\'s up?');
 }
 
 function populateChatEmails() {
@@ -804,8 +815,14 @@ const CHAT_OPENERS = [
 
 function onChatEmailChange() {
   const idx = document.getElementById('chat-email-select').value;
-  if (idx === '') { chatEmail = null; return; }
+  const clearBtn = document.getElementById('chat-email-clear');
+  if (idx === '') {
+    chatEmail = null;
+    clearBtn?.classList.add('hidden');
+    return;
+  }
   chatEmail = state.emails[parseInt(idx)];
+  clearBtn?.classList.remove('hidden');
   DEMO_CHAT_STATE.step = 'idle';
   const name = (chatEmail.from || '').replace(/<.*?>/, '').trim().split(/\s+/)[0] || 'them';
   const opener = CHAT_OPENERS[Math.floor(Math.random() * CHAT_OPENERS.length)](name);
@@ -897,6 +914,14 @@ async function sendChatMsg() {
   if (!text) return;
   input.value = '';
   addUserMsg(text);
+
+  // Detect "forget it / nah / leave it" — auto-drop the email
+  const dropPhrases = /\b(forget it|forget that|leave it|never mind|nevermind|nah|don't bother|skip it|drop it|let's just chat|just talk|ignore (the |that )?(email|reply)?)\b/i;
+  if (chatEmail && dropPhrases.test(text)) {
+    dropChatEmail(true); // silent — don't add another bot message
+    addBotMsg('dropped! what\'s on your mind?');
+    return;
+  }
 
   const typingEl = showTyping();
 
