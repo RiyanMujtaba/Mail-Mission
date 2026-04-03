@@ -792,19 +792,37 @@ function populateChatEmails() {
   if (prev !== undefined) sel.value = prev;
 }
 
+// Casual openers the bot picks from when an email is selected
+const CHAT_OPENERS = [
+  n => `okay so **${n}** emailed — what's the move? 👀`,
+  n => `got **${n}'s** email pulled up. what do you wanna say back?`,
+  n => `alright, **${n}** is waiting. what are we going with?`,
+  n => `on it — what's the vibe for this reply to **${n}**?`,
+  n => `**${n}'s** email is open. give me the gist and i'll write it.`,
+  n => `cool, looking at **${n}'s** message. how do you wanna play it?`,
+];
+
 function onChatEmailChange() {
   const idx = document.getElementById('chat-email-select').value;
   if (idx === '') { chatEmail = null; return; }
   chatEmail = state.emails[parseInt(idx)];
   DEMO_CHAT_STATE.step = 'idle';
-  const name = (chatEmail.from || '').replace(/<.*?>/, '').trim().split(/\s+/)[0];
-  addBotMsg(`Got it — replying to **${name}** about "${chatEmail.subject}". What do you want to say? Just describe it naturally.`);
+  const name = (chatEmail.from || '').replace(/<.*?>/, '').trim().split(/\s+/)[0] || 'them';
+  const opener = CHAT_OPENERS[Math.floor(Math.random() * CHAT_OPENERS.length)](name);
+  addBotMsg(opener);
 }
 
 function openChatWithEmail(emailSubject) {
   switchPage('agent');
-  const idx = state.emails.findIndex(e => e.subject === emailSubject);
-  if (idx === -1) return;
+  populateChatEmails();
+  // Fuzzy match — trim and case-insensitive in case of minor formatting diff
+  const norm = s => (s || '').trim().toLowerCase();
+  const idx = state.emails.findIndex(e => norm(e.subject) === norm(emailSubject));
+  if (idx === -1) {
+    // Fall back: just open the tab without pre-selecting
+    addBotMsg('pick the email from the dropdown above and i\'ll help you write the reply!');
+    return;
+  }
   const sel = document.getElementById('chat-email-select');
   if (sel) { sel.value = String(idx); onChatEmailChange(); }
 }
@@ -935,31 +953,64 @@ async function sendChatMsg() {
   }
 }
 
-async function doSendReply(uid) {
+function doSendReply(uid) {
   const btn      = document.getElementById(`csr-${uid}`);
   const statusEl = document.getElementById(`css-${uid}`);
   if (!chatPending || !btn) return;
-  btn.disabled    = true;
-  btn.textContent = '⏳ SENDING...';
+
+  // Snapshot pending data so undo can refer to it
+  const sendData = { ...chatPending };
+  let   cancelled = false;
+  let   countdown = 5;
+
+  btn.disabled = true;
+  if (statusEl) {
+    statusEl.innerHTML = `<button class="btn-undo-send" id="undo-${uid}">↩ UNDO</button>`;
+    statusEl.style.color = '';
+    document.getElementById(`undo-${uid}`)?.addEventListener('click', () => {
+      cancelled = true;
+      clearInterval(timer);
+      btn.disabled    = false;
+      btn.textContent = '📤 SEND REPLY';
+      statusEl.textContent = 'Cancelled.';
+      statusEl.style.color = 'var(--muted)';
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 2000);
+    });
+  }
+
+  // Tick countdown on the button
+  btn.textContent = `sending in ${countdown}s...`;
+  const timer = setInterval(() => {
+    countdown--;
+    if (cancelled) { clearInterval(timer); return; }
+    if (countdown > 0) {
+      btn.textContent = `sending in ${countdown}s...`;
+    } else {
+      clearInterval(timer);
+      actualSend(uid, btn, statusEl, sendData);
+    }
+  }, 1000);
+}
+
+async function actualSend(uid, btn, statusEl, sendData) {
+  btn.textContent = '⏳ sending...';
   try {
     const res = await api('/api/beta/send-direct', {
       method: 'POST',
-      body: JSON.stringify(chatPending)
+      body: JSON.stringify(sendData)
     });
     if (res.error) throw new Error(res.error);
-    btn.textContent = '✅ SENT';
-    if (statusEl) { statusEl.textContent = 'Sent!'; statusEl.style.color = 'var(--green)'; }
 
-    // Mark conversation as done so the bot knows not to draft another reply
+    btn.textContent = '✅ sent';
+    if (statusEl) { statusEl.textContent = ''; }
+
     chatHistory.push({ role: 'bot', text: '[SENT] Reply was sent successfully.' });
     chatPending = null;
-
-    // Reset email selection so bot doesn't loop on the same email
-    chatEmail = null;
+    chatEmail   = null;
     const sel = document.getElementById('chat-email-select');
     if (sel) sel.value = '';
 
-    setTimeout(() => addBotMsg('Sent! ✅ Anything else I can help with?'), 400);
+    setTimeout(() => addBotMsg('sent! ✅ need anything else?'), 400);
   } catch (err) {
     btn.disabled    = false;
     btn.textContent = '📤 SEND REPLY';
