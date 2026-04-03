@@ -28,6 +28,7 @@ const DEMO_BRIEF = `• Urgent: Q2 budget ($142K) needs your sign-off by Friday 
 let state = {
   tasks:     [],
   emails:    [],
+  promos:    [],
   brief:     '',
   filter:    'all',
   activeTab: 'tasks',
@@ -48,11 +49,15 @@ async function init() {
   if (params.get('error')) showLoginError(params.get('error'));
   history.replaceState({}, '', '/');
 
-  const { authenticated, user } = await api('/api/status');
+  const { authenticated, user, betaAuthorized } = await api('/api/status');
   if (!authenticated) return showScreen('login');
 
   showScreen('dashboard');
   document.getElementById('user-email').textContent = user.email;
+
+  if (!betaAuthorized) {
+    document.getElementById('btn-grant-perms').style.display = 'inline-flex';
+  }
 
   const cached = await api('/api/cache');
   if (cached) applyResult(cached);
@@ -67,38 +72,61 @@ function launchDemo() {
   document.getElementById('demo-banner').classList.remove('hidden');
   document.getElementById('user-email').textContent = 'demo@mailmission.app';
 
-  // Simulate scan with a loading animation
   const btn = document.getElementById('btn-scan');
-  btn.disabled = true;
+  btn.disabled    = true;
   btn.textContent = '⟳ SCANNING...';
-  showState('tasks', 'loading');
-  setLoadingText('LOADING DEMO INBOX...');
 
-  let progress = 0;
-  const interval = setInterval(() => {
-    progress += 18;
-    setLoadingProgress(progress);
-    if (progress >= 40)  setLoadingText('RUNNING AI ANALYSIS...');
-    if (progress >= 80)  setLoadingText('EXTRACTING TASKS...');
-    if (progress >= 100) {
-      clearInterval(interval);
-      setTimeout(() => {
-        applyResult({
-          tasks:        DEMO_TASKS,
-          brief:        DEMO_BRIEF,
-          scannedCount: DEMO_EMAILS.length,
-          timestamp:    new Date().toISOString()
-        });
-        state.emails = DEMO_EMAILS;
-        document.getElementById('inbox-badge').textContent = DEMO_EMAILS.length;
-        renderInbox();
-        document.getElementById('scan-hint').textContent = '// Demo data loaded';
-        btn.disabled    = false;
-        btn.textContent = '⟳ SCAN INBOX';
-      }, 300);
-    }
-  }, 120);
+  switchPage('tasks');
+  showState('tasks', 'loading');
+  snapProgress(0);
+  setLoadingStep('[1/2] Connecting to demo inbox...');
+  animateProgress(50, 2000);
+  startLoadingMessages();
+
+  setTimeout(() => {
+    setLoadingStep('[2/2] AI extracting tasks...');
+    animateProgress(97, 3000);
+  }, 2000);
+
+  setTimeout(() => {
+    stopLoadingMessages();
+    snapProgress(100);
+    updateLoadingMsg({ icon: '🎬', text: 'Lights, camera, action items...' });
+    setLoadingStep('[2/2] Done ✓');
+
+    setTimeout(() => {
+      state.emails = DEMO_EMAILS;
+      applyResult({
+        tasks:        DEMO_TASKS,
+        brief:        DEMO_BRIEF,
+        promos:       [],
+        scannedCount: DEMO_EMAILS.length,
+        timestamp:    new Date().toISOString()
+      });
+      document.getElementById('inbox-badge').textContent = DEMO_EMAILS.length;
+      document.getElementById('scan-hint').textContent = '// Demo data loaded';
+      btn.disabled    = false;
+      btn.textContent = '⟳ SCAN INBOX';
+    }, 400);
+  }, 5200);
 }
+
+// ── Theme ──────────────────────────────────────────────────────
+function setTheme(name) {
+  const t = name || 'retro';
+  document.body.setAttribute('data-theme', t);
+  localStorage.setItem('mm_theme', t);
+  document.querySelectorAll('.theme-dot').forEach(d =>
+    d.classList.toggle('active', d.dataset.theme === t)
+  );
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  setTheme(localStorage.getItem('mm_theme') || 'retro');
+  document.querySelectorAll('.theme-dot').forEach(dot =>
+    dot.addEventListener('click', () => setTheme(dot.dataset.theme))
+  );
+});
 
 // ── Screens ────────────────────────────────────────────────────
 function showScreen(name) {
@@ -108,8 +136,14 @@ function showScreen(name) {
 
 // ── API helper ─────────────────────────────────────────────────
 async function api(url, opts = {}) {
-  const res  = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
-  return res.json();
+  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    console.error('Non-JSON response from', url, ':', text.slice(0, 200));
+    throw new Error('Server error — check the terminal for details');
+  }
 }
 
 // ── Scan inbox ─────────────────────────────────────────────────
@@ -124,14 +158,14 @@ async function scanInbox() {
   btn.disabled    = true;
   btn.textContent = '⟳ SCANNING...';
 
+  switchPage('tasks');
   showState('tasks', 'loading');
-  setLoadingText('CONNECTING TO GMAIL...');
-  setLoadingProgress(15);
+  snapProgress(0);
+  setLoadingStep(`[1/2] Connecting to Gmail...`);
 
   try {
-    // Step 1 — fetch emails
-    setLoadingText('FETCHING EMAILS...');
-    setLoadingProgress(30);
+    // Step 1 — fetch emails, bar crawls 0→48% while waiting
+    animateProgress(48, 5000);
     const { emails, error: emailErr } = await api(`/api/emails?limit=${limit}`);
     if (emailErr) throw new Error(emailErr);
 
@@ -139,14 +173,19 @@ async function scanInbox() {
     document.getElementById('inbox-badge').textContent = state.emails.length;
     renderInbox();
 
+    snapProgress(50);
+    setLoadingStep(`[1/2] Got ${state.emails.length} emails ✓`);
+    await sleep(250);
+
     if (!state.emails.length) {
       showState('tasks', 'empty');
       return;
     }
 
-    // Step 2 — AI analysis
-    setLoadingText(`ANALYZING ${state.emails.length} EMAILS WITH AI...`);
-    setLoadingProgress(60);
+    // Step 2 — AI, bar crawls 50→97% over 60s (never stops before AI finishes), fun texts play
+    setLoadingStep(`[2/2] AI is reading your ${state.emails.length} emails...`);
+    startLoadingMessages();
+    animateProgress(97, 60000);
 
     const result = await api('/api/analyze', {
       method: 'POST',
@@ -155,20 +194,23 @@ async function scanInbox() {
 
     if (result.error) throw new Error(result.error);
 
-    setLoadingProgress(100);
-    await sleep(300);
+    stopLoadingMessages();
+    snapProgress(100);
+    updateLoadingMsg({ icon: '🎬', text: 'Lights, camera, action items...' });
+    setLoadingStep('[2/2] Done ✓');
+    await sleep(450);
 
     applyResult(result);
 
-    // Update scan hint
-    const now = new Date();
     document.getElementById('scan-hint').textContent =
-      `// Last scan: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      `// Last scan: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
   } catch (err) {
+    stopLoadingMessages();
     showState('tasks', 'error');
     document.getElementById('error-msg').textContent = err.message || 'Something went wrong.';
   } finally {
+    stopProgressAnimation();
     state.scanning  = false;
     btn.disabled    = false;
     btn.textContent = '⟳ SCAN INBOX';
@@ -176,12 +218,15 @@ async function scanInbox() {
 }
 
 function applyResult(result) {
-  state.tasks = result.tasks || [];
-  state.brief = result.brief || '';
+  state.tasks  = result.tasks  || [];
+  state.brief  = result.brief  || '';
+  state.promos = result.promos || [];
 
   updateStats(result.scannedCount || state.emails.length);
+  recordStat('scanned', result.scannedCount || state.emails.length);
   renderTasks();
   renderBrief(result);
+  renderInbox();
 }
 
 // ── Render tasks ───────────────────────────────────────────────
@@ -201,19 +246,18 @@ function renderTasks() {
   showState('tasks', 'list');
   filterBar.style.display = 'flex';
 
-  let filtered = state.tasks;
+  // Completed tasks are HIDDEN unless the ✅ DONE filter is active
+  let filtered;
   if (state.filter === 'completed') {
     filtered = state.tasks.filter(t => t.completed);
-  } else if (state.filter !== 'all') {
+  } else if (state.filter === 'all') {
+    filtered = state.tasks.filter(t => !t.completed);
+  } else {
     filtered = state.tasks.filter(t => t.priority === state.filter && !t.completed);
   }
 
-  // Sort: incomplete first, then HIGH → MEDIUM → LOW
   const order = { HIGH: 0, MEDIUM: 1, LOW: 2 };
-  filtered.sort((a, b) => {
-    if (a.completed !== b.completed) return a.completed ? 1 : -1;
-    return (order[a.priority] ?? 3) - (order[b.priority] ?? 3);
-  });
+  filtered.sort((a, b) => (order[a.priority] ?? 3) - (order[b.priority] ?? 3));
 
   if (!filtered.length) {
     container.innerHTML = `<div class="empty-state" style="padding:40px 20px">
@@ -223,7 +267,7 @@ function renderTasks() {
     return;
   }
 
-  container.innerHTML = filtered.map(task => taskCard(task)).join('');
+  container.innerHTML = filtered.map((task, i) => taskCard(task, i)).join('');
 
   // Attach events
   container.querySelectorAll('.task-card').forEach(card => {
@@ -242,11 +286,11 @@ function renderTasks() {
   });
 }
 
-function taskCard(task) {
+function taskCard(task, i = 0) {
   const priorityLabel = { HIGH: '!! HIGH', MEDIUM: '! MED', LOW: '– LOW' }[task.priority] || task.priority;
   const isDone = task.completed;
   return `
-    <div class="task-card priority-${task.priority} ${isDone ? 'completed' : ''}" data-id="${task.id}">
+    <div class="task-card priority-${task.priority} ${isDone ? 'completed' : ''}" data-id="${task.id}" style="animation-delay:${i * 0.06}s">
       <span class="task-priority-icon">${priorityLabel}</span>
       <div class="task-body">
         <div class="task-title">${escHtml(task.title)}</div>
@@ -263,27 +307,63 @@ function taskCard(task) {
     </div>`;
 }
 
+const DONE_QUIPS = [
+  "Touch grass. You've earned it. 🌱",
+  "One less email haunting you. 👻",
+  "CEO behavior. Respect. 📈",
+  "Boom. Deleted from existence. 💥",
+  "Your future self just nodded. 🙏",
+  "Task slain. You're built different. ⚔️",
+  "Go hydrate. You deserve it. 💧",
+  "The emails fear you now. 😤",
+  "Done before it even had a chance. ⚡",
+  "Inbox zero is coming for you. 📭",
+  "That email never stood a chance. 💀",
+  "Absolutely destroyed. Well played. 🎮",
+];
+
 // ── Toggle done ────────────────────────────────────────────────
 async function toggleDone(id) {
   const task = state.tasks.find(t => t.id === id);
   if (!task) return;
 
+  const wasCompleted = task.completed;
   task.completed = !task.completed;
 
   if (!state.demoMode) {
     const endpoint = task.completed ? `/api/tasks/${id}/complete` : `/api/tasks/${id}/undo`;
-    await api(endpoint, { method: 'POST' });
+    await api(endpoint, { method: 'POST', body: JSON.stringify({ emailSubject: task.emailSubject }) });
+  }
+
+  if (task.completed && !wasCompleted) {
+    showToast(DONE_QUIPS[Math.floor(Math.random() * DONE_QUIPS.length)]);
+    recordStat('completed');
   }
 
   renderTasks();
   updateStats();
 
-  // Update modal done button if open
   if (state.modalTaskId === id) {
-    const btn = document.getElementById('modal-done-btn');
-    btn.textContent = task.completed ? '✓ DONE' : '✓ MARK DONE';
-    btn.classList.toggle('done', task.completed);
+    closeModal();
   }
+}
+
+function showToast(msg) {
+  let toast = document.getElementById('done-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'done-toast';
+    toast.className = 'done-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.classList.remove('toast-out');
+  toast.classList.add('toast-in');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => {
+    toast.classList.remove('toast-in');
+    toast.classList.add('toast-out');
+  }, 2800);
 }
 
 // ── Modal ──────────────────────────────────────────────────────
@@ -336,7 +416,19 @@ function renderBrief(result) {
   const ts = result.timestamp ? new Date(result.timestamp) : new Date();
   document.getElementById('brief-time').textContent =
     ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  document.getElementById('brief-body').textContent = result.brief;
+  // Render brief with styled sections
+  const lines = result.brief.split('\n');
+  document.getElementById('brief-body').innerHTML = lines.map(line => {
+    if (line.startsWith('⚡') || line.startsWith('📬')) {
+      return `<div class="brief-section-title">${escHtml(line)}</div>`;
+    }
+    if (line.startsWith('•')) {
+      const isHigh = line.includes('🔴');
+      const isMed  = line.includes('🟡');
+      return `<div class="brief-line ${isHigh ? 'brief-high' : isMed ? 'brief-med' : ''}">${escHtml(line)}</div>`;
+    }
+    return line ? `<div class="brief-line">${escHtml(line)}</div>` : '';
+  }).join('');
 }
 
 // ── Render inbox ───────────────────────────────────────────────
@@ -344,29 +436,116 @@ function renderInbox() {
   const list = document.getElementById('inbox-list');
   const ph   = document.getElementById('inbox-placeholder');
 
-  if (!state.emails.length) { ph.classList.remove('hidden'); list.innerHTML = ''; return; }
+  if (!state.emails.length && !state.promos.length) {
+    ph.classList.remove('hidden'); list.innerHTML = ''; return;
+  }
   ph.classList.add('hidden');
 
-  list.innerHTML = state.emails.map(e => `
+  const emailCard = e => `
     <div class="inbox-item">
-      <div class="inbox-subject">
-        ${e.unread ? '<span class="unread-dot"></span>' : ''}
-        ${escHtml(e.subject)}
+      <div class="inbox-subject-row">
+        <div class="inbox-subject">
+          ${e.unread ? '<span class="unread-dot"></span>' : ''}
+          ${escHtml(e.subject)}
+        </div>
+        <div class="inbox-date">${escHtml(fmtDate(e.date))}</div>
       </div>
-      <div class="inbox-meta">${escHtml(e.from)} &nbsp;·&nbsp; ${escHtml(e.date)}</div>
+      <div class="inbox-meta">${escHtml(e.from)}</div>
       <div class="inbox-snippet">${escHtml(e.snippet)}</div>
-    </div>
-  `).join('');
+    </div>`;
+
+  const promoSection = state.promos.length ? `
+    <div class="promo-section" id="promo-section">
+      <button class="promo-toggle" id="promo-toggle" onclick="togglePromos()">
+        <span>📢 PROMOTIONS</span>
+        <span class="promo-count">${state.promos.length}</span>
+        <span class="promo-arrow" id="promo-arrow">▶</span>
+      </button>
+      <div class="promo-list hidden" id="promo-list">
+        ${state.promos.map(emailCard).join('')}
+      </div>
+    </div>` : '';
+
+  list.innerHTML = state.emails.map(emailCard).join('') + promoSection;
+}
+
+function togglePromos() {
+  const body  = document.getElementById('promo-list');
+  const arrow = document.getElementById('promo-arrow');
+  if (!body) return;
+  body.classList.toggle('hidden');
+  arrow.textContent = body.classList.contains('hidden') ? '▶' : '▼';
 }
 
 // ── Stats ──────────────────────────────────────────────────────
 function updateStats(scanned) {
-  if (scanned !== undefined)
-    document.getElementById('stat-scanned').textContent = scanned;
+  if (scanned !== undefined) flashStat('stat-scanned', scanned);
   const total = state.tasks.length;
   const done  = state.tasks.filter(t => t.completed).length;
-  document.getElementById('stat-tasks').textContent = total;
-  document.getElementById('stat-done').textContent  = done;
+  flashStat('stat-tasks', total);
+  flashStat('stat-done', done);
+}
+
+function flashStat(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = val;
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+}
+
+// ── Fun loading messages ───────────────────────────────────────
+const LOADING_MSGS = [
+  { icon: '🕺', text: 'Moonwalking through your inbox...' },
+  { icon: '🍳', text: 'Cooking up your task list...' },
+  { icon: '🔍', text: 'Snooping through your emails...' },
+  { icon: '🧠', text: 'Teaching the AI to read...' },
+  { icon: '☕', text: 'Grabbing a coffee while scanning...' },
+  { icon: '🚀', text: 'Launching into your inbox...' },
+  { icon: '🎯', text: 'Hunting for action items...' },
+  { icon: '🧹', text: 'Sweeping through the clutter...' },
+  { icon: '🎪', text: 'Juggling your emails...' },
+  { icon: '🕵️', text: 'Investigating suspicious emails...' },
+  { icon: '🏋️', text: 'Heavy lifting in progress...' },
+  { icon: '🎸', text: 'Rocking through your inbox...' },
+  { icon: '🧩', text: 'Putting the pieces together...' },
+  { icon: '⚡', text: 'Zapping through 25 emails...' },
+  { icon: '🤖', text: 'Convincing the robots to help...' },
+  { icon: '🦅', text: 'Eagle-eyeing your inbox...' },
+  { icon: '🧃', text: 'Squeezing out the important stuff...' },
+  { icon: '📡', text: 'Receiving transmissions...' },
+  { icon: '🎭', text: 'Performing inbox surgery...' },
+];
+
+let loadingInterval = null;
+
+function startLoadingMessages() {
+  // Shuffle so every scan feels different
+  const shuffled = [...LOADING_MSGS].sort(() => Math.random() - 0.5);
+  let idx = 0;
+  updateLoadingMsg(shuffled[idx]);
+  loadingInterval = setInterval(() => {
+    idx = (idx + 1) % shuffled.length;
+    const el = document.getElementById('loading-text');
+    if (el) el.style.opacity = '0';
+    setTimeout(() => {
+      updateLoadingMsg(shuffled[idx]);
+      if (el) el.style.opacity = '1';
+    }, 300);
+  }, 2000);
+}
+
+function stopLoadingMessages() {
+  clearInterval(loadingInterval);
+  loadingInterval = null;
+}
+
+function updateLoadingMsg(msg) {
+  const el   = document.getElementById('loading-text');
+  const icon = document.getElementById('loading-icon');
+  if (el)   el.textContent   = msg.text;
+  if (icon) icon.textContent = msg.icon;
 }
 
 // ── Loading helpers ────────────────────────────────────────────
@@ -388,19 +567,72 @@ function setLoadingText(txt) {
   document.getElementById('loading-text').textContent = txt;
 }
 
-function setLoadingProgress(pct) {
-  document.getElementById('loading-fill').style.width = pct + '%';
+// ── Progress bar (RAF-driven smooth crawl) ─────────────────────
+let _raf = null;
+let _currentPct = 0;
+
+function snapProgress(pct) {
+  stopProgressAnimation();
+  _currentPct = pct;
+  const fill = document.getElementById('loading-fill');
+  const pctEl = document.getElementById('loading-pct');
+  if (fill) { fill.classList.remove('scanning'); fill.style.width = pct + '%'; }
+  if (pctEl) pctEl.textContent = Math.round(pct) + '%';
 }
 
-// ── Tabs ───────────────────────────────────────────────────────
-document.querySelectorAll('.tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    state.activeTab = btn.dataset.tab;
-  });
+function animateProgress(targetPct, durationMs) {
+  stopProgressAnimation();
+  const fill = document.getElementById('loading-fill');
+  const pctEl = document.getElementById('loading-pct');
+  if (fill) fill.classList.remove('scanning');
+  const startPct = _currentPct;
+  const startTime = performance.now();
+
+  function tick(now) {
+    const t = Math.min((now - startTime) / durationMs, 1);
+    const eased = t < 1 ? 1 - Math.pow(1 - t, 3) : 1; // ease-out cubic
+    _currentPct = startPct + (targetPct - startPct) * eased;
+    if (fill) fill.style.width = _currentPct + '%';
+    if (pctEl) pctEl.textContent = Math.round(_currentPct) + '%';
+    if (t < 1) _raf = requestAnimationFrame(tick);
+  }
+  _raf = requestAnimationFrame(tick);
+}
+
+function stopProgressAnimation() {
+  if (_raf) { cancelAnimationFrame(_raf); _raf = null; }
+}
+
+function setLoadingStep(msg) {
+  const el = document.getElementById('loading-step');
+  if (el) el.textContent = msg;
+}
+
+// ── Page navigation ────────────────────────────────────────────
+const PAGE_MAP = {
+  tasks: 'tab-tasks', brief: 'tab-brief', inbox: 'tab-inbox',
+  agent: 'tab-agent', stats: 'page-stats', games: 'page-games'
+};
+
+function switchPage(name) {
+  document.querySelectorAll('.sb-item').forEach(i => i.classList.toggle('active', i.dataset.page === name));
+  document.querySelectorAll('.page-panel').forEach(p => p.classList.remove('active'));
+  const el = document.getElementById(PAGE_MAP[name]);
+  if (el) el.classList.add('active');
+  state.activeTab = name;
+  if (name === 'stats') renderStats();
+}
+
+document.querySelectorAll('.sb-item').forEach(btn => {
+  btn.addEventListener('click', () => switchPage(btn.dataset.page));
+});
+
+// BETA section toggle
+document.getElementById('sb-beta-toggle')?.addEventListener('click', () => {
+  const body  = document.getElementById('sb-beta-body');
+  const arrow = document.getElementById('sb-beta-arrow');
+  body.classList.toggle('hidden');
+  if (arrow) arrow.style.transform = body.classList.contains('hidden') ? '' : 'rotate(90deg)';
 });
 
 // ── Filters ────────────────────────────────────────────────────
@@ -462,6 +694,7 @@ function escHtml(str) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function fmtDate(d) { try { const dt = new Date(d); return dt.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }); } catch { return d||''; } }
 
 function showLoginError(err) {
   const messages = {
@@ -528,10 +761,7 @@ async function runAgent() {
   btn.textContent = '⚙ RUNNING...';
 
   // Switch to agent tab
-  document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  document.querySelector('[data-tab="agent"]').classList.add('active');
-  document.getElementById('tab-agent').classList.add('active');
+  switchPage('agent');
   document.getElementById('agent-placeholder').classList.add('hidden');
   document.getElementById('agent-running').classList.remove('hidden');
   document.getElementById('agent-log-list').innerHTML = '';
@@ -544,15 +774,18 @@ async function runAgent() {
 
     document.getElementById('agent-running').classList.add('hidden');
 
+    if (result.error) throw new Error(result.error);
+
     const log = result.log || [];
-    document.getElementById('agent-badge').textContent = log.length;
+    const acted = log.filter(e => e.action !== 'none').length;
+    document.getElementById('agent-badge').textContent = acted || log.length;
 
     if (!log.length) {
       document.getElementById('agent-log-list').innerHTML = `
         <div class="placeholder-state">
-          <div class="placeholder-icon">✅</div>
-          <div class="placeholder-title">NOTHING TO DO</div>
-          <div class="placeholder-sub">No actions were needed based on your permissions.</div>
+          <div class="placeholder-icon">📭</div>
+          <div class="placeholder-title">NO EMAILS SENT</div>
+          <div class="placeholder-sub">Make sure you've scanned your inbox first, then run the agent.</div>
         </div>`;
     } else {
       renderAgentLog(log);
@@ -560,10 +793,14 @@ async function runAgent() {
 
   } catch (err) {
     document.getElementById('agent-running').classList.add('hidden');
+    const isPermError = err.message?.toLowerCase().includes('permission') || err.message?.toLowerCase().includes('insufficien') || err.message?.toLowerCase().includes('403');
+    if (isPermError) {
+      document.getElementById('btn-grant-perms').style.display = 'inline-flex';
+    }
     document.getElementById('agent-log-list').innerHTML = `
       <div class="error-state">
         <div class="error-icon">⚠</div>
-        <div class="error-msg">${err.message || 'Agent failed. Make sure Gmail permissions are granted.'}</div>
+        <div class="error-msg">${isPermError ? 'Gmail needs extra permissions to draft replies. Click GRANT PERMISSIONS FIRST above.' : (err.message || 'Agent failed.')}</div>
       </div>`;
   } finally {
     btn.disabled    = false;
@@ -572,20 +809,115 @@ async function runAgent() {
 }
 
 function renderAgentLog(log) {
-  const icons   = { draft_reply: '✍️', archive: '📦', mark_read: '👁', error: '⚠️' };
-  const labels  = { draft_reply: 'DRAFTED REPLY', archive: 'ARCHIVED', mark_read: 'MARKED READ', error: 'ERROR' };
+  const icons  = { draft_reply: '✍️', archive: '📦', mark_read: '👁', none: '–', error: '⚠️' };
+  const labels = { draft_reply: 'DRAFTED REPLY', archive: 'ARCHIVED', mark_read: 'MARKED READ', none: 'SKIPPED', error: 'ERROR' };
 
-  document.getElementById('agent-log-list').innerHTML = log.map(entry => `
-    <div class="log-item">
+  document.getElementById('agent-log-list').innerHTML = log.map((entry, i) => `
+    <div class="log-item" data-draft-id="${entry.draftId || ''}" style="animation-delay:${i * 0.07}s">
       <div class="log-icon">${icons[entry.action] || '•'}</div>
       <div class="log-body">
         <span class="log-action ${entry.action}">${labels[entry.action] || entry.action}</span>
         <div class="log-subject">${escHtml(entry.subject)}</div>
-        <div class="log-reason">${escHtml(entry.reason)}</div>
-        ${entry.preview ? `<div class="log-preview">"${escHtml(entry.preview)}..."</div>` : ''}
+        <div class="log-reason">${escHtml(entry.from || '')}${entry.date ? ' · ' + escHtml(fmtDate(entry.date)) : ''} — ${escHtml(entry.reason)}</div>
+        ${entry.preview ? `<div class="log-preview">${escHtml(entry.preview)}</div>` : ''}
+        ${entry.draftId ? `
+          <div class="log-actions">
+            <button class="btn-send-draft" data-draft-id="${entry.draftId}">📤 SEND NOW</button>
+            <span class="send-status" id="send-status-${entry.draftId}"></span>
+          </div>` : ''}
       </div>
     </div>
   `).join('');
+
+  // Wire send buttons
+  document.querySelectorAll('.btn-send-draft').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const draftId  = btn.dataset.draftId;
+      const statusEl = document.getElementById(`send-status-${draftId}`);
+      btn.disabled   = true;
+      btn.textContent = '⏳ SENDING...';
+      try {
+        await api(`/api/beta/send/${draftId}`, { method: 'POST' });
+        btn.textContent  = '✅ SENT';
+        statusEl.textContent = 'Reply sent successfully';
+        statusEl.style.color = 'var(--green)';
+      } catch (err) {
+        btn.disabled    = false;
+        btn.textContent = '📤 SEND NOW';
+        statusEl.textContent = 'Failed to send';
+        statusEl.style.color = 'var(--red)';
+      }
+    });
+  });
+}
+
+// ── Stats (localStorage) ───────────────────────────────────────
+function getStats() {
+  try { return JSON.parse(localStorage.getItem('mm_stats')) || { days:{}, allTime:{completed:0,scanned:0}, streak:0, lastUsed:null }; }
+  catch { return { days:{}, allTime:{completed:0,scanned:0}, streak:0, lastUsed:null }; }
+}
+function saveStats(s) { localStorage.setItem('mm_stats', JSON.stringify(s)); }
+
+function recordStat(type, value = 1) {
+  const s = getStats();
+  const today = new Date().toISOString().slice(0,10);
+  if (!s.days[today]) s.days[today] = { completed:0, scanned:0 };
+  if (type === 'scanned') {
+    s.days[today].scanned = value;
+    s.allTime.scanned = (s.allTime.scanned||0) + 1;
+    const yesterday = new Date(Date.now()-86400000).toISOString().slice(0,10);
+    s.streak = (!s.lastUsed || s.lastUsed < yesterday) ? 1 : (s.lastUsed === yesterday) ? (s.streak||0)+1 : (s.streak||1);
+    s.lastUsed = today;
+  } else {
+    s.days[today].completed += value;
+    s.allTime.completed = (s.allTime.completed||0) + value;
+  }
+  saveStats(s);
+}
+
+function renderStats() {
+  const s = getStats();
+  const today = new Date().toISOString().slice(0,10);
+  const todayD = s.days[today] || { completed:0, scanned:0 };
+
+  let weekDone = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(Date.now()-i*86400000).toISOString().slice(0,10);
+    weekDone += s.days[d]?.completed || 0;
+  }
+
+  let bestDay = 0;
+  Object.values(s.days).forEach(d => { if ((d.completed||0) > bestDay) bestDay = d.completed; });
+
+  const total = s.allTime.completed || 0;
+  const rank    = total >= 200 ? '👑 LEGEND'      : total >= 100 ? '🔥 ELITE AGENT'  : total >= 50 ? '⚡ FIELD AGENT' : total >= 10 ? '🎯 OPERATIVE' : '🌱 ROOKIE';
+  const rankSub = total >= 200 ? 'The inbox fears you.' : total >= 100 ? 'You are unstoppable.' : total >= 50 ? 'Getting things done.' : total >= 10 ? 'Building the habit.' : 'Every mission starts here.';
+
+  const days7 = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.now()-i*86400000);
+    days7.push({ label: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()], count: s.days[d.toISOString().slice(0,10)]?.completed||0, today: i===0 });
+  }
+  const maxBar = Math.max(...days7.map(d => d.count), 1);
+
+  document.getElementById('stats-page-inner').innerHTML = `
+    <div class="stats-header">// MISSION STATS //</div>
+    <div class="stats-rank">
+      <div class="stats-rank-label">${rank}</div>
+      <div class="stats-rank-sub">${rankSub}</div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><span class="stat-card-num">${todayD.completed}</span><div class="stat-card-label">Tasks Today</div></div>
+      <div class="stat-card"><span class="stat-card-num">${weekDone}</span><div class="stat-card-label">This Week</div></div>
+      <div class="stat-card"><span class="stat-card-num">${total}</span><div class="stat-card-label">All Time</div></div>
+      <div class="stat-card"><span class="stat-card-num">${s.allTime.scanned||0}</span><div class="stat-card-label">Scans Run</div></div>
+      <div class="stat-card"><span class="stat-card-num">${bestDay}</span><div class="stat-card-label">Best Day</div></div>
+      <div class="stat-card"><span class="stat-card-num">${s.streak||0}🔥</span><div class="stat-card-label">Day Streak</div></div>
+    </div>
+    <div class="stats-chart-title">// LAST 7 DAYS //</div>
+    <div class="stats-chart">
+      ${days7.map(d => `<div class="chart-col"><div class="chart-bar${d.today?' today':''}" style="height:${Math.max((d.count/maxBar)*100,3)}%"></div><div class="chart-day">${d.label}</div></div>`).join('')}
+    </div>`;
 }
 
 // ── Start ──────────────────────────────────────────────────────

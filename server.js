@@ -1,8 +1,9 @@
 require('dotenv').config();
 const express    = require('express');
 const { google } = require('googleapis');
-const Groq = require('groq-sdk');
+const Groq        = require('groq-sdk');
 const session    = require('express-session');
+const FileStore  = require('session-file-store')(session);
 const path       = require('path');
 
 const app  = express();
@@ -12,10 +13,16 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
+  store: new FileStore({
+    path: './sessions',
+    ttl: 30 * 24 * 60 * 60, // 30 days
+    reapInterval: 24 * 60 * 60,
+    logFn: () => {}
+  }),
   secret: process.env.SESSION_SECRET || 'mail-mission-secret',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }
+  cookie: { secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 } // 30 days
 }));
 
 // ── Google OAuth2 ─────────────────────────────────────────────────
@@ -41,11 +48,27 @@ const SCOPES_BETA = [
 
 // ── Groq ──────────────────────────────────────────────────────────
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const FAST_MODEL = 'llama-3.1-8b-instant';   // small, uses fewer tokens
+const SMART_MODEL = 'llama-3.3-70b-versatile'; // for task extraction
 
 // ── In-memory stores ──────────────────────────────────────────────
 const completedStore = new Map(); // sessionId → Set of task IDs
 const cacheStore     = new Map(); // sessionId → last analysis result
 const actionLogStore = new Map(); // sessionId → Array of action log entries
+
+// ── Groq helper (module-level so all routes can use it) ───────────
+const groqCall = async (messages, retries = 3) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await groq.chat.completions.create({ model: FAST_MODEL, messages, temperature: 0.2 });
+    } catch (err) {
+      if (err.status === 429 && i < retries - 1) {
+        const wait = (parseInt(err.message.match(/(\d+)s/)?.[1] || '15') + 1) * 1000;
+        await new Promise(r => setTimeout(r, wait));
+      } else throw err;
+    }
+  }
+};
 
 // ── BETA: AI agent tools definition ──────────────────────────────
 const AGENT_TOOLS = [
@@ -195,54 +218,43 @@ app.get('/api/emails', async (req, res) => {
   try {
     oauth2Client.setCredentials(req.session.tokens);
     const gmail  = google.gmail({ version: 'v1', auth: oauth2Client });
-    const limit  = Math.min(parseInt(req.query.limit) || 25, 50);
+    const limit  = Math.min(parseInt(req.query.limit) || 25, 50); // up to 50
 
     const listRes = await gmail.users.messages.list({
       userId: 'me',
       maxResults: limit,
-      q: 'in:inbox -category:promotions -category:social -category:updates'
+      labelIds: ['INBOX']
     });
 
     const messages = listRes.data.messages || [];
     if (!messages.length) return res.json({ emails: [] });
 
+    // Use metadata format — much faster, gives headers + snippet, skips full body
     const emails = await Promise.all(messages.map(async (msg) => {
       const detail = await gmail.users.messages.get({
         userId: 'me',
         id: msg.id,
-        format: 'full'
+        format: 'metadata',
+        metadataHeaders: ['From', 'Subject', 'Date']
       });
 
-      const headers   = detail.data.payload.headers || [];
+      const headers   = detail.data.payload?.headers || [];
       const getHeader = (name) =>
         headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';
 
-      // Extract plain-text body recursively
-      let body = '';
-      const extractBody = (part) => {
-        if (!part) return;
-        if (part.mimeType === 'text/plain' && part.body?.data) {
-          body += Buffer.from(part.body.data, 'base64').toString('utf-8');
-        }
-        (part.parts || []).forEach(extractBody);
-      };
-
-      if (detail.data.payload.body?.data) {
-        body = Buffer.from(detail.data.payload.body.data, 'base64').toString('utf-8');
-      } else {
-        extractBody(detail.data.payload);
-      }
-
       return {
-        id:      msg.id,
-        subject: getHeader('subject') || '(No Subject)',
-        from:    getHeader('from'),
-        date:    getHeader('date'),
-        snippet: detail.data.snippet || '',
-        body:    body.slice(0, 1500),
-        unread:  detail.data.labelIds?.includes('UNREAD') ?? false
+        id:       msg.id,
+        threadId: detail.data.threadId,
+        subject:  getHeader('subject') || '(No Subject)',
+        from:     getHeader('from'),
+        date:     getHeader('date'),
+        snippet:  detail.data.snippet || '',
+        unread:   detail.data.labelIds?.includes('UNREAD') ?? false
       };
     }));
+
+    // Sort newest first
+    emails.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     res.json({ emails });
   } catch (err) {
@@ -262,77 +274,101 @@ app.post('/api/analyze', async (req, res) => {
     const sid       = req.session.id;
     const completed = completedStore.get(sid) || new Set();
 
-    // Build email text for AI
-    const emailText = emails.map((e, i) => `
-=== EMAIL ${i + 1} ===
-From: ${e.from}
-Subject: ${e.subject}
-Date: ${e.date}
-Body: ${e.snippet || e.body?.slice(0, 600) || '(empty)'}
-`).join('\n');
+    // ── Detect promos server-side — conservative, only obvious automation ──
+    const isPromo = e => {
+      const addr = ((e.from || '').match(/<(.+?)>/) || [])[1] || e.from || '';
+      return /^(noreply|no-reply|donotreply|do-not-reply|notifications?|newsletter|mailer-daemon|bounce|postmaster|alerts?)@/i.test(addr)
+          || /@(amazonses|sendgrid|mailchimp|constantcontact|klaviyo|mailgun|sparkpost)\./i.test(addr);
+    };
+    const promoEmails = emails.filter(e => isPromo(e));
+    const realEmails  = emails.filter(e => !isPromo(e));
 
-    // ── Task extraction prompt ────────────────────────────────────
-    const taskPrompt = `You are an expert productivity assistant. Analyze these ${emails.length} emails and extract only actionable tasks.
+    // ── Step 1: Extract tasks via AI (real emails only) ───────────
+    const emailLines = realEmails.map((e, i) =>
+      `[${i}] "${e.subject}" | ${e.from.replace(/<.*?>/, '').trim()} | ${(e.snippet||'').slice(0,60)}`
+    ).join('\n');
 
-${emailText}
+    const taskPrompt = `Return ONLY a valid JSON array of tasks. No markdown, no explanation.
+Each object: {"i":0,"title":"short action phrase","detail":"one sentence what to do","priority":"HIGH","category":"REPLY","deadline":null}
+i = the email index from the list.
+priority: HIGH=urgent/overdue/from boss, MEDIUM=needs reply/review, LOW=FYI
+category: REPLY/ACTION/DEADLINE/REVIEW/INFO
+INCLUDE every email — be generous. If a real person sent it, it's a task.
+SKIP only: automated system emails with no human name in the sender.
+Emails:
+${emailLines}`;
 
-Return ONLY a valid JSON array. No extra text, no markdown, no code blocks. Just the raw array:
+    const taskRes = await groqCall([{ role: 'user', content: taskPrompt }]);
+    let taskRaw = taskRes.choices[0].message.content.trim()
+      .replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
 
-[
-  {
-    "id": "task_1",
-    "title": "Action title in max 7 words",
-    "detail": "Exactly what needs to be done, one sentence.",
-    "from": "Sender name or company",
-    "fromEmail": "sender@email.com",
-    "priority": "HIGH",
-    "category": "REPLY",
-    "deadline": null,
-    "emailSubject": "original subject line"
-  }
-]
+    console.log('AI task response:', taskRaw.slice(0, 400));
 
-Priority: HIGH = urgent/from boss/overdue, MEDIUM = needs action soon, LOW = no deadline
-Category: REPLY = needs response, ACTION = do something, DEADLINE = has due date, REVIEW = read/approve, INFO = important info
-Exclude emails with no action needed. Return [] if none.`;
+    let aiTasks = [];
+    try { aiTasks = JSON.parse(taskRaw); }
+    catch {
+      const m = taskRaw.match(/\[[\s\S]*\]/);
+      if (m) try { aiTasks = JSON.parse(m[0]); } catch { aiTasks = []; }
+    }
+    if (!Array.isArray(aiTasks)) aiTasks = [];
 
-    const taskResult = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: taskPrompt }],
-      temperature: 0.2
+    // Build tasks — map AI result back to source emails by index
+    let tasks = aiTasks.map((t, pos) => {
+      const src = emails[t.i ?? pos] || emails[pos] || emails[0] || {};
+      return {
+        id:           `t_${Date.now()}_${pos}`,
+        title:        (t.title  || src.subject || 'Task').slice(0, 60),
+        detail:       (t.detail || src.snippet || '').slice(0, 150),
+        from:         (src.from || '').replace(/<.*?>/, '').trim(),
+        fromEmail:    (src.from?.match(/<(.+?)>/) || [])[1] || '',
+        priority:     ['HIGH','MEDIUM','LOW'].includes(t.priority) ? t.priority : 'MEDIUM',
+        category:     t.category || 'REPLY',
+        deadline:     t.deadline || null,
+        emailSubject: src.subject || ''
+      };
     });
-    let taskText = taskResult.choices[0].message.content.trim();
-    taskText = taskText.replace(/^```[a-z]*\n?/i, '').replace(/```$/,'').trim();
 
-    let tasks = [];
-    try {
-      tasks = JSON.parse(taskText);
-    } catch {
-      tasks = [];
+    // Fallback: if AI returned nothing, make tasks from real emails
+    if (!tasks.length) {
+      tasks = realEmails.slice(0, 15).map((e, i) => ({
+        id:           `fb_${Date.now()}_${i}`,
+        title:        (e.subject || 'Email').slice(0, 60),
+        detail:       (e.snippet || '').slice(0, 150),
+        from:         (e.from || '').replace(/<.*?>/, '').trim(),
+        fromEmail:    (e.from?.match(/<(.+?)>/) || [])[1] || '',
+        priority:     'MEDIUM',
+        category:     'REPLY',
+        deadline:     null,
+        emailSubject: e.subject || ''
+      }));
     }
 
-    // Mark completed tasks
-    tasks = tasks.map(t => ({ ...t, completed: completed.has(t.id) }));
+    // Completed state persists by email subject across scans
+    tasks = tasks.map(t => ({ ...t, completed: completed.has(t.emailSubject) }));
 
-    // ── Daily brief prompt ────────────────────────────────────────
-    const briefPrompt = `Write a sharp daily brief based on these emails. Max 4 bullet points. Each starts with •. Be specific — name senders and topics. Focus on what matters most today.
+    // ── Step 2: Build brief (no promos in important or everything else) ──
+    const prioOrder   = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+    const sortedTasks = [...tasks].sort((a, b) => (prioOrder[a.priority] ?? 3) - (prioOrder[b.priority] ?? 3));
 
-Emails:
-${emails.slice(0, 15).map(e => `• ${e.subject} — from ${e.from}: ${e.snippet?.slice(0, 120)}`).join('\n')}
+    const importantLines = sortedTasks.length
+      ? sortedTasks.map(t => {
+          const tag = t.priority === 'HIGH' ? '🔴' : t.priority === 'MEDIUM' ? '🟡' : '🟢';
+          return `• ${tag} ${t.title} (${t.from})${t.deadline ? ' — ' + t.deadline : ''}`;
+        }).join('\n')
+      : '• Nothing urgent — inbox looking clean.';
 
-Write only the bullet points, nothing else:`;
+    const taskSubjectSet = new Set(tasks.map(t => t.emailSubject));
+    const otherReal = realEmails.filter(e => !taskSubjectSet.has(e.subject)).slice(0, 5);
+    const otherLines = otherReal.map(e => `• ${(e.subject || '').slice(0, 55)}`).join('\n') || '• No other emails.';
 
-    const briefResult = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: briefPrompt }],
-      temperature: 0.3
-    });
+    const brief = `⚡ IMPORTANT\n${importantLines}\n\n📬 EVERYTHING ELSE\n${otherLines}`;
 
     const result = {
       tasks,
-      brief: briefResult.choices[0].message.content.trim(),
+      brief,
+      promos:       promoEmails,
       scannedCount: emails.length,
-      timestamp: new Date().toISOString()
+      timestamp:    new Date().toISOString()
     };
 
     // Cache result
@@ -345,12 +381,13 @@ Write only the bullet points, nothing else:`;
   }
 });
 
-// ── API: mark task complete ───────────────────────────────────────
+// ── API: mark task complete (keyed by emailSubject for persistence across scans) ──
 app.post('/api/tasks/:id/complete', (req, res) => {
   if (!req.session.tokens) return res.status(401).json({ error: 'Not authenticated' });
   const sid       = req.session.id;
   const completed = completedStore.get(sid) || new Set();
-  completed.add(req.params.id);
+  const subject   = req.body.emailSubject || req.params.id;
+  completed.add(subject);
   completedStore.set(sid, completed);
   res.json({ ok: true });
 });
@@ -359,7 +396,8 @@ app.post('/api/tasks/:id/undo', (req, res) => {
   if (!req.session.tokens) return res.status(401).json({ error: 'Not authenticated' });
   const sid       = req.session.id;
   const completed = completedStore.get(sid) || new Set();
-  completed.delete(req.params.id);
+  const subject   = req.body.emailSubject || req.params.id;
+  completed.delete(subject);
   completedStore.set(sid, completed);
   res.json({ ok: true });
 });
@@ -371,12 +409,12 @@ app.get('/api/cache', (req, res) => {
   res.json(cached || null);
 });
 
-// ── BETA: AI Agent — actually does tasks ─────────────────────────
+// ── BETA: AI Agent ────────────────────────────────────────────────
 app.post('/api/beta/run', async (req, res) => {
   if (!req.session.tokens) return res.status(401).json({ error: 'Not authenticated' });
 
   const { emails, permissions } = req.body;
-  if (!emails?.length) return res.status(400).json({ error: 'No emails' });
+  if (!emails?.length) return res.status(400).json({ error: 'No emails provided — scan your inbox first.' });
 
   const perms = permissions || {};
   const log   = [];
@@ -385,94 +423,97 @@ app.post('/api/beta/run', async (req, res) => {
     oauth2Client.setCredentials(req.session.tokens);
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-    for (const email of emails) {
-      const prompt = `You are an AI email assistant. Analyze this email and decide what action to take based on allowed permissions.
+    // Split emails: real people vs automated
+    const isAutoSender = e => {
+      const addr = ((e.from || '').match(/<(.+?)>/) || [])[1] || e.from || '';
+      return /^(noreply|no-reply|donotreply|notifications?|newsletter|mailer-daemon|bounce|alerts?)@/i.test(addr)
+          || /@(amazonses|sendgrid|mailchimp|constantcontact|klaviyo|mailgun|sparkpost)\./i.test(addr);
+    };
+    const realEmails  = emails.filter(e => !isAutoSender(e));
+    const autoEmails  = emails.filter(e =>  isAutoSender(e));
 
-Email:
-From: ${email.from}
-Subject: ${email.subject}
-Body: ${email.body?.slice(0, 800) || email.snippet}
+    // ── Draft replies for real emails (if permission on) ─────────
+    if (perms.draft_replies && realEmails.length) {
+      const replyPrompt = `Write short, natural email replies for each email below.
+Return ONLY a JSON array (no markdown):
+[{"index":0,"reply":"full reply text","reason":"why this reply"}]
 
-Allowed actions:
-${perms.draft_replies ? '- draft_reply: write a professional reply draft' : ''}
-${perms.auto_archive ? '- archive: archive this email if it needs no action' : ''}
-${perms.mark_read    ? '- mark_read: mark as read after processing' : ''}
+Emails:
+${realEmails.map((e, i) => `[${i}] From: ${e.from}\nSubject: ${e.subject}\nMessage: ${(e.snippet||'').slice(0,250)}`).join('\n\n')}`;
 
-Respond with ONLY a JSON object (no markdown):
-{
-  "action": "draft_reply" | "archive" | "mark_read" | "none",
-  "reason": "one sentence why",
-  "reply_body": "full reply text if action is draft_reply, else null"
-}
+      const replyRes = await groqCall([{ role: 'user', content: replyPrompt }]);
+      let txt = replyRes.choices[0].message.content.trim().replace(/^```[a-z]*\n?/i,'').replace(/```$/,'').trim();
+      let replies = [];
+      try { replies = JSON.parse(txt); }
+      catch { const m = txt.match(/\[[\s\S]*\]/); if (m) try { replies = JSON.parse(m[0]); } catch {} }
+      if (!Array.isArray(replies)) replies = [];
 
-If none of the allowed actions apply, use "none".`;
-
-      const result = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2
-      });
-
-      let decision;
-      try {
-        let txt = result.choices[0].message.content.trim();
-        txt = txt.replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
-        decision = JSON.parse(txt);
-      } catch {
-        continue;
-      }
-
-      if (decision.action === 'none') continue;
-
-      // Execute the action
-      try {
-        if (decision.action === 'draft_reply' && perms.draft_replies) {
-          // Extract sender email
-          const fromMatch = email.from.match(/<(.+?)>/) || [null, email.from];
-          const toEmail   = fromMatch[1];
-
-          const replyBody = `${decision.reply_body}\n\n---\nThis reply was drafted by Mail Mission AI.`;
-          const rawMsg    = [
-            `To: ${toEmail}`,
-            `Subject: Re: ${email.subject}`,
-            `In-Reply-To: ${email.id}`,
-            `Content-Type: text/plain; charset=utf-8`,
-            '',
-            replyBody
-          ].join('\n');
-
-          const encoded = Buffer.from(rawMsg).toString('base64').replace(/\+/g,'-').replace(/\//g,'_');
-          await gmail.users.drafts.create({
-            userId: 'me',
-            requestBody: { message: { raw: encoded, threadId: email.threadId } }
-          });
-
-          log.push({ emailId: email.id, subject: email.subject, action: 'draft_reply', reason: decision.reason, preview: decision.reply_body?.slice(0, 120) });
-
-        } else if (decision.action === 'archive' && perms.auto_archive) {
-          await gmail.users.messages.modify({
-            userId: 'me', id: email.id,
-            requestBody: { removeLabelIds: ['INBOX'] }
-          });
-          log.push({ emailId: email.id, subject: email.subject, action: 'archive', reason: decision.reason });
-
-        } else if (decision.action === 'mark_read' && perms.mark_read) {
-          await gmail.users.messages.modify({
-            userId: 'me', id: email.id,
-            requestBody: { removeLabelIds: ['UNREAD'] }
-          });
-          log.push({ emailId: email.id, subject: email.subject, action: 'mark_read', reason: decision.reason });
+      await Promise.all(realEmails.map(async (email, idx) => {
+        const r = replies.find(x => x.index === idx) || replies[idx];
+        if (!r?.reply) {
+          log.push({ emailId: email.id, subject: email.subject, from: email.from, date: email.date, action: 'none', reason: 'AI did not generate a reply' });
+          return;
         }
-      } catch (actionErr) {
-        log.push({ emailId: email.id, subject: email.subject, action: 'error', reason: actionErr.message });
-      }
+        try {
+          const toAddr   = (email.from.match(/<(.+?)>/) || [null, email.from])[1];
+          const body     = `${r.reply}\n\n— Drafted by Mail Mission AI`;
+          const rawMsg   = `To: ${toAddr}\r\nSubject: Re: ${email.subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`;
+          const encoded  = Buffer.from(rawMsg).toString('base64').replace(/\+/g,'-').replace(/\//g,'_');
+          const draft    = await gmail.users.drafts.create({ userId:'me', requestBody:{ message:{ raw:encoded, threadId:email.threadId } } });
+          log.push({ emailId:email.id, subject:email.subject, from:email.from, date:email.date, action:'draft_reply', reason:r.reason||'Reply drafted', preview:r.reply, draftId:draft.data.id });
+        } catch(e) {
+          log.push({ emailId:email.id, subject:email.subject, from:email.from, date:email.date, action:'error', reason:e.message });
+        }
+      }));
+    } else if (!perms.draft_replies) {
+      // No draft permission — just log real emails as needing review
+      realEmails.forEach(email => {
+        log.push({ emailId:email.id, subject:email.subject, from:email.from, date:email.date, action:'none', reason:'Enable "Draft replies" to let the agent write replies' });
+      });
     }
+
+    // ── Archive automated/promo emails (if permission on) ────────
+    await Promise.all(autoEmails.map(async email => {
+      if (perms.auto_archive) {
+        try {
+          await gmail.users.messages.modify({ userId:'me', id:email.id, requestBody:{ removeLabelIds:['INBOX'] } });
+          log.push({ emailId:email.id, subject:email.subject, from:email.from, date:email.date, action:'archive', reason:'Automated/promotional email' });
+        } catch(e) {
+          log.push({ emailId:email.id, subject:email.subject, from:email.from, date:email.date, action:'error', reason:e.message });
+        }
+      } else if (perms.mark_read && email.unread) {
+        try {
+          await gmail.users.messages.modify({ userId:'me', id:email.id, requestBody:{ removeLabelIds:['UNREAD'] } });
+          log.push({ emailId:email.id, subject:email.subject, from:email.from, date:email.date, action:'mark_read', reason:'Automated email marked as read' });
+        } catch(e) {
+          log.push({ emailId:email.id, subject:email.subject, from:email.from, date:email.date, action:'error', reason:e.message });
+        }
+      } else {
+        log.push({ emailId:email.id, subject:email.subject, from:email.from, date:email.date, action:'none', reason:'Automated email — enable auto-archive to clean these up' });
+      }
+    }));
 
     actionLogStore.set(req.session.id, log);
     res.json({ log });
 
   } catch (err) {
     console.error('BETA agent error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── BETA: Send a saved draft ──────────────────────────────────────
+app.post('/api/beta/send/:draftId', async (req, res) => {
+  if (!req.session.tokens) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    oauth2Client.setCredentials(req.session.tokens);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    await gmail.users.drafts.send({
+      userId: 'me',
+      requestBody: { id: req.params.draftId }
+    });
+    res.json({ ok: true });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

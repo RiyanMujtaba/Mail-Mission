@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="style.css" />
   <link href="https://fonts.googleapis.com/css2?family=VT323&family=Press+Start+2P&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
-<body>
+<body data-theme="retro">
 
   <!-- CRT effects -->
   <div class="scanlines"></div>
@@ -47,13 +47,26 @@
         <span class="btn-icon">⚡</span> TRY DEMO — no login needed
       </button>
       <div class="login-note">Read-only access. We never store your emails.</div>
+      <div class="login-dumb">
+        <div class="login-dumb-bot">
+          <div class="dumb-bot-body">
+            <div class="dumb-bot-eyes">• •</div>
+            <div class="dumb-bot-mouth">‿</div>
+          </div>
+          <div class="dumb-bot-legs">┃┃</div>
+        </div>
+        <div class="login-dumb-text">
+          <span class="login-dumb-label">PSA from the AI:</span><br/>
+          be gentle — i am a bit dumb sometimes 🙏
+        </div>
+      </div>
     </div>
   </div>
 
   <!-- ── DASHBOARD ── -->
   <div id="dashboard" class="screen hidden">
 
-    <!-- Demo banner -->
+    <!-- Demo banner (full width, above app-layout) -->
     <div id="demo-banner" class="demo-banner hidden">
       ⚡ DEMO MODE — showing sample data &nbsp;|&nbsp;
       <a href="/auth/google" class="demo-connect-link" id="demo-connect-link">Connect real Gmail →</a>
@@ -70,168 +83,260 @@
       </div>
     </div>
 
-    <!-- Header -->
-    <header class="dash-header">
-      <div class="header-left">
-        <span class="header-logo">✉ MAIL<span class="accent"> MISSION</span></span>
-      </div>
-      <div class="header-center" id="header-stats">
-        <span class="stat"><span class="stat-val" id="stat-scanned">0</span> SCANNED</span>
-        <span class="stat-sep">|</span>
-        <span class="stat"><span class="stat-val accent" id="stat-tasks">0</span> TASKS</span>
-        <span class="stat-sep">|</span>
-        <span class="stat"><span class="stat-val green" id="stat-done">0</span> DONE</span>
-      </div>
-      <div class="header-right">
-        <span id="user-email" class="user-email"></span>
-        <button class="btn-scan" id="btn-scan">⟳ SCAN INBOX</button>
-        <a href="/auth/logout" class="btn-logout">EXIT</a>
-      </div>
-    </header>
+    <!-- App layout: sidebar + main -->
+    <div class="app-layout">
 
-    <!-- Limit selector -->
-    <div class="scan-bar">
-      <span class="scan-label">SCAN DEPTH:</span>
-      <select id="email-limit" class="limit-select">
-        <option value="10">10 emails</option>
-        <option value="25" selected>25 emails</option>
-        <option value="50">50 emails</option>
-      </select>
-      <span class="scan-hint" id="scan-hint">// Last scan: never</span>
-    </div>
+      <!-- ── SIDEBAR ── -->
+      <aside class="sidebar">
 
-    <!-- BETA bar -->
-    <div class="beta-bar" id="beta-bar">
-      <div class="beta-left">
-        <span class="beta-badge">BETA</span>
-        <span class="beta-label">AI Agent Mode — let the AI actually do your tasks</span>
-      </div>
-      <div class="beta-right">
-        <label class="beta-toggle-wrap">
-          <span class="beta-perm-label">Draft replies</span>
-          <input type="checkbox" class="beta-perm" data-perm="draft_replies" />
-          <span class="beta-slider"></span>
-        </label>
-        <label class="beta-toggle-wrap">
-          <span class="beta-perm-label">Auto-archive</span>
-          <input type="checkbox" class="beta-perm" data-perm="auto_archive" />
-          <span class="beta-slider"></span>
-        </label>
-        <label class="beta-toggle-wrap">
-          <span class="beta-perm-label">Mark read</span>
-          <input type="checkbox" class="beta-perm" data-perm="mark_read" />
-          <span class="beta-slider"></span>
-        </label>
-        <button class="btn-agent" id="btn-agent">⚡ RUN AGENT</button>
-      </div>
-    </div>
+        <!-- Logo -->
+        <div class="sb-logo">
+          <span class="sb-logo-icon">✉</span>
+          <span class="sb-logo-text">MAIL MISSION</span>
+        </div>
 
-    <!-- Tabs -->
-    <nav class="tabs">
-      <button class="tab active" data-tab="tasks">
-        <span class="tab-icon">⚡</span> TASKS
-        <span class="tab-badge" id="tasks-badge">0</span>
-      </button>
-      <button class="tab" data-tab="brief">
-        <span class="tab-icon">📋</span> DAILY BRIEF
-      </button>
-      <button class="tab" data-tab="inbox">
-        <span class="tab-icon">✉</span> RAW INBOX
-        <span class="tab-badge" id="inbox-badge">0</span>
-      </button>
-      <button class="tab" data-tab="agent">
-        <span class="tab-icon">🤖</span> AGENT LOG
-        <span class="tab-badge" id="agent-badge">0</span>
-      </button>
-    </nav>
+        <!-- Scan area -->
+        <div class="sb-scan">
+          <select id="email-limit" class="limit-select">
+            <option value="5">5 emails</option>
+            <option value="15">15 emails</option>
+            <option value="25" selected>25 emails</option>
+            <option value="50">50 emails</option>
+          </select>
+          <button class="btn-scan" id="btn-scan">⟳ SCAN INBOX</button>
+          <div class="scan-hint" id="scan-hint">// Last scan: never</div>
+        </div>
 
-    <!-- Tab Content -->
-    <main class="dash-main">
+        <!-- Nav -->
+        <nav class="sb-nav">
+          <button class="sb-item active" data-page="tasks">
+            <span class="sb-icon">⚡</span>
+            <span class="sb-label">TASKS</span>
+            <span class="tab-badge" id="tasks-badge">0</span>
+          </button>
+          <button class="sb-item" data-page="brief">
+            <span class="sb-icon">📋</span>
+            <span class="sb-label">DAILY BRIEF</span>
+          </button>
+          <button class="sb-item" data-page="inbox">
+            <span class="sb-icon">✉</span>
+            <span class="sb-label">RAW INBOX</span>
+            <span class="tab-badge" id="inbox-badge">0</span>
+          </button>
+          <button class="sb-item" data-page="agent">
+            <span class="sb-icon">🤖</span>
+            <span class="sb-label">AGENT LOG</span>
+            <span class="tab-badge" id="agent-badge">0</span>
+          </button>
+          <button class="sb-item" data-page="stats">
+            <span class="sb-icon">📊</span>
+            <span class="sb-label">STATS</span>
+          </button>
+          <button class="sb-item" data-page="games">
+            <span class="sb-icon">🎮</span>
+            <span class="sb-label">GAMES</span>
+          </button>
+        </nav>
 
-      <!-- TASKS TAB -->
-      <div class="tab-content active" id="tab-tasks">
-        <div id="tasks-loading" class="loading-state hidden">
-          <div class="loading-bar">
-            <div class="loading-fill" id="loading-fill"></div>
+        <!-- BETA section (collapsible) -->
+        <div class="sb-beta">
+          <button class="sb-beta-toggle" id="sb-beta-toggle">
+            <span class="beta-badge">BETA</span>
+            <span class="sb-beta-label">AI AGENT MODE</span>
+            <span class="sb-beta-arrow" id="sb-beta-arrow">▶</span>
+          </button>
+          <div class="sb-beta-body hidden" id="sb-beta-body">
+            <div class="sb-beta-desc">Let the AI do your tasks</div>
+            <label class="beta-toggle-wrap">
+              <span class="beta-perm-label">Draft replies</span>
+              <input type="checkbox" class="beta-perm" data-perm="draft_replies" />
+              <span class="beta-slider"></span>
+            </label>
+            <label class="beta-toggle-wrap">
+              <span class="beta-perm-label">Auto-archive</span>
+              <input type="checkbox" class="beta-perm" data-perm="auto_archive" />
+              <span class="beta-slider"></span>
+            </label>
+            <label class="beta-toggle-wrap">
+              <span class="beta-perm-label">Mark read</span>
+              <input type="checkbox" class="beta-perm" data-perm="mark_read" />
+              <span class="beta-slider"></span>
+            </label>
+            <a href="/auth/google-beta" class="btn-grant" id="btn-grant-perms" style="display:none">🔑 GRANT PERMS</a>
+            <button class="btn-agent" id="btn-agent">⚡ RUN AGENT</button>
           </div>
-          <div class="loading-text" id="loading-text">INITIALIZING SCAN...</div>
         </div>
-        <div id="tasks-empty" class="empty-state hidden">
-          <div class="empty-icon">📭</div>
-          <div class="empty-title">NO TASKS FOUND</div>
-          <div class="empty-sub">Your inbox is clear, soldier.</div>
-        </div>
-        <div id="tasks-error" class="error-state hidden">
-          <div class="error-icon">⚠</div>
-          <div class="error-msg" id="error-msg">Something went wrong.</div>
-          <button class="btn-retry" id="btn-retry">RETRY</button>
-        </div>
-        <div id="tasks-list">
-          <!-- Task filter bar -->
-          <div class="filter-bar" id="filter-bar" style="display:none">
-            <button class="filter active" data-filter="all">ALL</button>
-            <button class="filter" data-filter="HIGH">
-              <span class="dot red"></span> HIGH
-            </button>
-            <button class="filter" data-filter="MEDIUM">
-              <span class="dot amber"></span> MEDIUM
-            </button>
-            <button class="filter" data-filter="LOW">
-              <span class="dot green"></span> LOW
-            </button>
-            <button class="filter" data-filter="completed">✅ DONE</button>
+
+        <!-- Footer -->
+        <div class="sb-footer">
+          <div class="sb-user-email" id="user-email"></div>
+          <div class="theme-switcher">
+            <span class="theme-switcher-label">THEME</span>
+            <button class="theme-dot active" data-theme="retro" title="Retro"></button>
+            <button class="theme-dot" data-theme="dark" title="Dark"></button>
+            <button class="theme-dot" data-theme="futuristic" title="Futuristic"></button>
           </div>
-          <div id="tasks-container"></div>
-        </div>
-        <div id="tasks-placeholder" class="placeholder-state">
-          <div class="placeholder-icon">⚡</div>
-          <div class="placeholder-title">READY TO SCAN</div>
-          <div class="placeholder-sub">Hit <span class="accent">⟳ SCAN INBOX</span> to extract your tasks.</div>
-        </div>
-      </div>
-
-      <!-- BRIEF TAB -->
-      <div class="tab-content" id="tab-brief">
-        <div id="brief-placeholder" class="placeholder-state">
-          <div class="placeholder-icon">📋</div>
-          <div class="placeholder-title">NO BRIEF YET</div>
-          <div class="placeholder-sub">Scan your inbox first to generate today's brief.</div>
-        </div>
-        <div id="brief-content" class="brief-panel hidden">
-          <div class="brief-header">
-            <span class="brief-title">// DAILY BRIEF //</span>
-            <span class="brief-time" id="brief-time"></span>
+          <div class="sb-footer-stats">
+            <span><span class="stat-val" id="stat-scanned">0</span> scanned</span>
+            <span><span class="stat-val accent" id="stat-tasks">0</span> tasks</span>
+            <span><span class="stat-val green" id="stat-done">0</span> done</span>
           </div>
-          <div class="brief-body" id="brief-body"></div>
+          <a href="/auth/google" class="sb-footer-link">Switch Account</a>
+          <a href="/auth/logout" class="sb-footer-link sb-logout-link">Log Out</a>
         </div>
-      </div>
 
-      <!-- INBOX TAB -->
-      <div class="tab-content" id="tab-inbox">
-        <div id="inbox-placeholder" class="placeholder-state">
-          <div class="placeholder-icon">✉</div>
-          <div class="placeholder-title">INBOX EMPTY</div>
-          <div class="placeholder-sub">Scan your inbox to see raw emails here.</div>
-        </div>
-        <div id="inbox-list"></div>
-      </div>
+      </aside>
 
-      <!-- AGENT LOG TAB -->
-      <div class="tab-content" id="tab-agent">
-        <div id="agent-placeholder" class="placeholder-state">
-          <div class="placeholder-icon">🤖</div>
-          <div class="placeholder-title">AGENT HASN'T RUN YET</div>
-          <div class="placeholder-sub">Enable permissions above and click <span class="accent">⚡ RUN AGENT</span></div>
-        </div>
-        <div id="agent-running" class="placeholder-state hidden">
-          <div class="placeholder-icon">⚙️</div>
-          <div class="placeholder-title" id="agent-running-text">AGENT WORKING...</div>
-          <div class="placeholder-sub">Processing your emails one by one</div>
-        </div>
-        <div id="agent-log-list"></div>
-      </div>
+      <!-- ── MAIN CONTENT ── -->
+      <div class="main-wrap">
 
-    </main>
+        <!-- TASKS PAGE -->
+        <div class="page-panel active" id="tab-tasks">
+          <div id="tasks-loading" class="loading-state hidden">
+            <div class="loading-icon" id="loading-icon">📬</div>
+            <div class="loading-text" id="loading-text">INITIALIZING SCAN...</div>
+            <div class="loading-bar-row">
+              <div class="loading-bar">
+                <div class="loading-fill" id="loading-fill"></div>
+              </div>
+              <div class="loading-pct" id="loading-pct">0%</div>
+            </div>
+            <div class="loading-step" id="loading-step"></div>
+          </div>
+          <div id="tasks-empty" class="empty-state hidden">
+            <div class="empty-icon">📭</div>
+            <div class="empty-title">NO TASKS FOUND</div>
+            <div class="empty-sub">Your inbox is clear, soldier.</div>
+          </div>
+          <div id="tasks-error" class="error-state hidden">
+            <div class="error-icon">⚠</div>
+            <div class="error-msg" id="error-msg">Something went wrong.</div>
+            <button class="btn-retry" id="btn-retry">RETRY</button>
+          </div>
+          <div id="tasks-list">
+            <div class="filter-bar" id="filter-bar" style="display:none">
+              <button class="filter active" data-filter="all">ALL</button>
+              <button class="filter" data-filter="HIGH">
+                <span class="dot red"></span> HIGH
+              </button>
+              <button class="filter" data-filter="MEDIUM">
+                <span class="dot amber"></span> MEDIUM
+              </button>
+              <button class="filter" data-filter="LOW">
+                <span class="dot green"></span> LOW
+              </button>
+              <button class="filter" data-filter="completed">✅ DONE</button>
+            </div>
+            <div id="tasks-container"></div>
+          </div>
+          <div id="tasks-placeholder" class="placeholder-state">
+            <div class="placeholder-icon">⚡</div>
+            <div class="placeholder-title">READY TO SCAN</div>
+            <div class="placeholder-sub">Hit <span class="accent">⟳ SCAN INBOX</span> to extract your tasks.</div>
+          </div>
+        </div>
+
+        <!-- BRIEF PAGE -->
+        <div class="page-panel" id="tab-brief">
+          <div id="brief-placeholder" class="placeholder-state">
+            <div class="placeholder-icon">📋</div>
+            <div class="placeholder-title">NO BRIEF YET</div>
+            <div class="placeholder-sub">Scan your inbox first to generate today's brief.</div>
+          </div>
+          <div id="brief-content" class="brief-panel hidden">
+            <div class="brief-header">
+              <span class="brief-title">// DAILY BRIEF //</span>
+              <span class="brief-time" id="brief-time"></span>
+            </div>
+            <div class="brief-body" id="brief-body"></div>
+          </div>
+        </div>
+
+        <!-- INBOX PAGE -->
+        <div class="page-panel" id="tab-inbox">
+          <div id="inbox-placeholder" class="placeholder-state">
+            <div class="placeholder-icon">✉</div>
+            <div class="placeholder-title">INBOX EMPTY</div>
+            <div class="placeholder-sub">Scan your inbox to see raw emails here.</div>
+          </div>
+          <div id="inbox-list"></div>
+        </div>
+
+        <!-- AGENT LOG PAGE -->
+        <div class="page-panel" id="tab-agent">
+          <div id="agent-placeholder" class="placeholder-state">
+            <div class="placeholder-icon">🤖</div>
+            <div class="placeholder-title">AGENT HASN'T RUN YET</div>
+            <div class="placeholder-sub">Enable permissions in the sidebar and click <span class="accent">⚡ RUN AGENT</span></div>
+          </div>
+          <div id="agent-running" class="placeholder-state hidden">
+            <div class="agent-bot-wrap">
+              <div class="agent-bot-body">
+                <div class="agent-bot-eyes">• •</div>
+                <div class="agent-bot-mouth">‿</div>
+              </div>
+              <div class="agent-bot-arm left-arm">╱</div>
+              <div class="agent-bot-arm right-arm">╲</div>
+              <div class="agent-bot-legs">┃┃</div>
+              <div class="agent-mail-float">📧</div>
+            </div>
+            <div class="placeholder-title" id="agent-running-text">AGENT WORKING...</div>
+            <div class="placeholder-sub">Your little robot is on it 🤖</div>
+          </div>
+          <div id="agent-log-list"></div>
+        </div>
+
+        <!-- STATS PAGE -->
+        <div class="page-panel" id="page-stats">
+          <div class="stats-page-inner" id="stats-page-inner">
+            <!-- rendered by JS -->
+          </div>
+        </div>
+
+        <!-- GAMES PAGE -->
+        <div class="page-panel" id="page-games">
+          <div id="games-grid-view">
+            <div class="page-title">🎮 GAMES</div>
+            <div class="games-grid">
+              <div class="game-card">
+                <div class="game-card-icon">🐐</div>
+                <div class="game-card-name">GOAT RUNNER</div>
+                <div class="game-card-desc">Jump over obstacles. Space/tap to jump.</div>
+                <button class="btn-play-game" data-game="goat">PLAY</button>
+              </div>
+              <div class="game-card">
+                <div class="game-card-icon">🚀</div>
+                <div class="game-card-name">SPACE BLASTER</div>
+                <div class="game-card-desc">Arrows to rotate, space to shoot asteroids.</div>
+                <button class="btn-play-game" data-game="space">PLAY</button>
+              </div>
+              <div class="game-card">
+                <div class="game-card-icon">🏓</div>
+                <div class="game-card-name">PONG VS AI</div>
+                <div class="game-card-desc">W/S keys. First to 7 points wins.</div>
+                <button class="btn-play-game" data-game="pong">PLAY</button>
+              </div>
+              <div class="game-card">
+                <div class="game-card-icon">🐍</div>
+                <div class="game-card-name">SNAKE</div>
+                <div class="game-card-desc">Arrow keys. Eat food, don't hit walls.</div>
+                <button class="btn-play-game" data-game="snake">PLAY</button>
+              </div>
+            </div>
+          </div>
+          <div id="game-viewport" class="hidden">
+            <div class="game-viewport-header">
+              <button id="btn-back-game" class="btn-back-game">← BACK</button>
+              <span id="game-viewport-title" class="game-viewport-title"></span>
+            </div>
+            <div class="game-canvas-wrap">
+              <canvas id="game-canvas"></canvas>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- end .main-wrap -->
+    </div><!-- end .app-layout -->
   </div>
 
   <!-- ── TASK DETAIL MODAL ── -->
@@ -252,5 +357,6 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="games.js"></script>
 </body>
 </html>
